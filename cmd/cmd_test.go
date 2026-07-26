@@ -1,0 +1,558 @@
+package cmd
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestVersionCommands(t *testing.T) {
+	t.Parallel()
+
+	stdout, _, err := executeCommand(t, []string{"version"})
+	if err != nil {
+		t.Fatalf("precept version: %v", err)
+	}
+	if stdout != "0.1.0\n" {
+		t.Fatalf("precept version output = %q, want %q", stdout, "0.1.0\n")
+	}
+
+	stdout, _, err = executeCommand(t, []string{"--version"})
+	if err != nil {
+		t.Fatalf("precept --version: %v", err)
+	}
+	if !strings.Contains(stdout, "0.1.0") {
+		t.Fatalf("precept --version output = %q, want version", stdout)
+	}
+}
+
+func TestCommandsDefaultToCurrentDirectory(t *testing.T) {
+	repository := t.TempDir()
+	git := exec.Command("git", "init", "-q", repository)
+	if output, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get current directory: %v", err)
+	}
+	if err := os.Chdir(repository); err != nil {
+		t.Fatalf("change to fixture repository: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDirectory); err != nil {
+			t.Errorf("restore current directory: %v", err)
+		}
+	})
+
+	stdout, _, err := executeCommand(t, []string{"list", "--json"})
+	if err != nil {
+		t.Fatalf("precept list without scope: %v", err)
+	}
+	var listResult listDocument
+	if err := json.Unmarshal([]byte(stdout), &listResult); err != nil {
+		t.Fatalf("decode list JSON: %v\nstdout:\n%s", err, stdout)
+	}
+	if listResult.Scope != "." {
+		t.Fatalf("list scope = %q, want current directory", listResult.Scope)
+	}
+
+	binDirectory := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDirectory, 0o755); err != nil {
+		t.Fatalf("create fake bin directory: %v", err)
+	}
+	const fakeCodex = `#!/bin/sh
+exit 9
+`
+	mustWriteFile(t, filepath.Join(binDirectory, "codex"), fakeCodex, 0o755)
+	t.Setenv("PATH", binDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	stdout, stderr, exitCode, logPath := executeCLI(t, []string{"verify", "--agent", "codex", "--json"})
+	if exitCode != 0 {
+		t.Fatalf("precept verify without scope exit code = %d", exitCode)
+	}
+	var verifyResult struct {
+		Scope string `json:"scope"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &verifyResult); err != nil {
+		t.Fatalf("decode verify JSON: %v\nstdout:\n%s", err, stdout)
+	}
+	if verifyResult.Scope != "." {
+		t.Fatalf("verify scope = %q, want current directory", verifyResult.Scope)
+	}
+	if strings.Contains(stdout, `"log_path"`) {
+		t.Fatalf("verify JSON duplicated the final log-path announcement:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "Discovered 0 claim(s) in .; nothing to validate") {
+		t.Fatalf("verify stderr does not explain the empty scope:\n%s", stderr)
+	}
+	assertFinalLogLine(t, stderr, logPath)
+	t.Cleanup(func() { _ = os.Remove(logPath) })
+}
+
+func TestVerificationLogPathIsLastAfterOperationalError(t *testing.T) {
+	missingContext := filepath.Join(t.TempDir(), "missing-context.md")
+	command, state := newRootCommand("0.1.0")
+	command.SetArgs([]string{
+		"verify",
+		"--agent", "codex",
+		"--append-prompt-file", missingContext,
+	})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+
+	if exitCode := executeRoot(context.Background(), command, state); exitCode != 2 {
+		t.Fatalf("precept verify exit code = %d, want 2", exitCode)
+	}
+	if state.verificationLogPath == "" {
+		t.Fatal("verify did not record its log path")
+	}
+	t.Cleanup(func() { _ = os.Remove(state.verificationLogPath) })
+	if !strings.Contains(stderr.String(), "error: read appended prompt file") {
+		t.Fatalf("verify stderr does not contain the operational error:\n%s", stderr.String())
+	}
+	assertFinalLogLine(t, stderr.String(), state.verificationLogPath)
+}
+
+func TestListTextOmitsDeclarationKind(t *testing.T) {
+	t.Parallel()
+
+	repository := t.TempDir()
+	git := exec.Command("git", "init", "-q", repository)
+	if output, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	fixturePath := filepath.Join(repository, "fixture.go")
+	mustWriteFile(t, fixturePath, `package fixture
+
+// INVARIANT: always returns one
+func Example() int { return 1 }
+`, 0o644)
+	mustWriteFile(t, filepath.Join(repository, "other.go"), `package fixture
+
+// POSTCONDITION: this file was not selected
+func Other() {}
+`, 0o644)
+
+	stdout, stderr, err := executeCommand(t, []string{"list", fixturePath})
+	if err != nil {
+		t.Fatalf("precept list: %v", err)
+	}
+	const want = "fixture.go:3  INVARIANT  Example\n  always returns one\n\n1 claim(s) in fixture.go\n"
+	if stdout != want {
+		t.Fatalf("list text output =\n%s\nwant:\n%s", stdout, want)
+	}
+	if !strings.Contains(stderr, "Scanning for claims in "+fixturePath+"...") {
+		t.Fatalf("list stderr does not immediately identify its scan scope:\n%s", stderr)
+	}
+}
+
+func TestListStopsPromptlyWhenCanceledAfterScanningStarts(t *testing.T) {
+	repository := t.TempDir()
+	git := exec.Command("git", "init", "-q", repository)
+	if output, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	mustWriteFile(t, filepath.Join(repository, "fixture.go"), "package fixture\n", 0o644)
+
+	command := NewRootCommand("0.1.0")
+	command.SetArgs([]string{"list", repository})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command.SetOut(&stdout)
+	command.SetErr(cancelingWriter{writer: &stderr, cancel: cancel})
+	startedAt := time.Now()
+	err := command.ExecuteContext(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("precept list error = %v, want context cancellation", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("precept list took %s to stop after cancellation", elapsed)
+	}
+	if !strings.Contains(stderr.String(), "Scanning for claims in "+repository+"...") {
+		t.Fatalf("list stderr does not identify its scan scope:\n%s", stderr.String())
+	}
+}
+
+func TestResolveScopeCancelsRunningGit(t *testing.T) {
+	repository := t.TempDir()
+	binDirectory := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	startedPath := filepath.Join(t.TempDir(), "git-started")
+	const fakeGit = `#!/bin/sh
+: > "$PRECEPT_FAKE_GIT_STARTED"
+kill -STOP $$
+`
+	mustWriteFile(t, filepath.Join(binDirectory, "git"), fakeGit, 0o755)
+	t.Setenv("PRECEPT_FAKE_GIT_STARTED", startedPath)
+	t.Setenv("PATH", binDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := resolveScope(ctx, repository)
+		done <- err
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(startedPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fake git did not start within one second")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	startedAt := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("resolveScope() error = %v, want context cancellation", err)
+		}
+		if elapsed := time.Since(startedAt); elapsed > time.Second {
+			t.Fatalf("resolveScope() took %s to stop after cancellation", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resolveScope() did not stop within one second of cancellation")
+	}
+}
+
+func TestUnsupportedFileExplainsCurrentSourceSupport(t *testing.T) {
+	t.Parallel()
+
+	repository := t.TempDir()
+	git := exec.Command("git", "init", "-q", repository)
+	if output, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	unsupportedPath := filepath.Join(repository, "fixture.txt")
+	mustWriteFile(t, unsupportedPath, "// INVARIANT: ignored\n", 0o644)
+
+	_, stderr, err := executeCommand(t, []string{"list", unsupportedPath})
+	if err == nil {
+		t.Fatal("precept list accepted an unsupported file")
+	}
+	if !strings.Contains(err.Error(), "expected a .go file") {
+		t.Fatalf("error = %q, want current source support to be explicit", err)
+	}
+	if !strings.Contains(stderr, "Scanning for claims in "+unsupportedPath+"...") {
+		t.Fatalf("list stderr does not identify its scan scope:\n%s", stderr)
+	}
+}
+
+func TestCommandsUseJSONFlag(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"list", "verify"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stdout, _, err := executeCommand(t, []string{name, "--help"})
+			if err != nil {
+				t.Fatalf("precept %s --help: %v", name, err)
+			}
+			if !strings.Contains(stdout, "--json") {
+				t.Fatalf("help does not describe --json:\n%s", stdout)
+			}
+			if strings.Contains(stdout, "--format") {
+				t.Fatalf("help still describes removed --format flag:\n%s", stdout)
+			}
+			if !strings.Contains(stdout, "[file-or-directory]") {
+				t.Fatalf("help does not use the generic file-or-directory argument:\n%s", stdout)
+			}
+		})
+	}
+}
+
+func TestCommandsExplainFileOrDirectoryArgument(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"list", "verify"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := executeCommand(t, []string{name, "first", "second"})
+			if err == nil {
+				t.Fatal("command with two file-or-directory arguments succeeded")
+			}
+			for _, text := range []string{"at most one file-or-directory argument", "current directory"} {
+				if !strings.Contains(err.Error(), text) {
+					t.Fatalf("error = %q, want it to contain %q", err, text)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateVerifyFlags(t *testing.T) {
+	t.Parallel()
+
+	valid := verifyFlags{agent: "codex", jobs: 1, timeout: time.Second}
+	if err := validateVerifyFlags(valid); err != nil {
+		t.Fatalf("validateVerifyFlags(valid) = %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*verifyFlags)
+		message string
+	}{
+		{name: "missing agent", mutate: func(flags *verifyFlags) { flags.agent = "" }, message: "--agent"},
+		{name: "zero jobs", mutate: func(flags *verifyFlags) { flags.jobs = 0 }, message: "--jobs"},
+		{name: "zero timeout", mutate: func(flags *verifyFlags) { flags.timeout = 0 }, message: "--timeout"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			flags := valid
+			test.mutate(&flags)
+			err := validateVerifyFlags(flags)
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("validateVerifyFlags() = %v, want error containing %q", err, test.message)
+			}
+		})
+	}
+}
+
+func TestLoadAppendedSections(t *testing.T) {
+	t.Parallel()
+
+	filename := filepath.Join(t.TempDir(), "context.md")
+	mustWriteFile(t, filename, "context from file\n", 0o600)
+	sections, err := loadAppendedSections(
+		[]string{"first", "  ", "second"},
+		[]string{filename},
+	)
+	if err != nil {
+		t.Fatalf("loadAppendedSections() error = %v", err)
+	}
+	want := []string{"first", "second", "context from file\n"}
+	if strings.Join(sections, "|") != strings.Join(want, "|") {
+		t.Fatalf("loadAppendedSections() = %#v, want %#v", sections, want)
+	}
+}
+
+func TestVerifyWithFakeCodexIsStatelessAndRunsOncePerClaim(t *testing.T) {
+	base := t.TempDir()
+	repository := filepath.Join(base, "repository")
+	if err := os.MkdirAll(repository, 0o755); err != nil {
+		t.Fatalf("create repository: %v", err)
+	}
+	git := exec.Command("git", "init", "-q", repository)
+	if output, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+
+	const source = `package fixture
+
+// PRECONDITION: One always returns one.
+func One() int { return 1 }
+
+func Two() int {
+	// ASSERTION: Two is about to return two.
+	// This continuation is part of the second claim.
+	return 2
+}
+`
+	sourcePath := filepath.Join(repository, "fixture.go")
+	mustWriteFile(t, sourcePath, source, 0o644)
+
+	binDirectory := filepath.Join(base, "bin")
+	if err := os.MkdirAll(binDirectory, 0o755); err != nil {
+		t.Fatalf("create fake bin directory: %v", err)
+	}
+	callLog := filepath.Join(base, "calls.log")
+	const fakeCodex = `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\n' 'codex-cli fake-1.0'
+  exit 0
+fi
+input=$(cat)
+case "$input" in
+  *"shared verifier context"*) ;;
+  *) printf '%s\n' 'missing appended context' >&2; exit 9 ;;
+esac
+printf '%s\n' run >> "$PRECEPT_FAKE_CALL_LOG"
+printf '%s\n' '{"type":"thread.started","thread_id":"fake-session"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"verdict\":\"holds\",\"summary\":\"the fixture implementation is direct\",\"evidence\":[{\"file\":\"fixture.go\",\"start_line\":4,\"end_line\":4,\"reason\":\"the return is constant\"}],\"counterexample\":\"\"}"}}'
+`
+	mustWriteFile(t, filepath.Join(binDirectory, "codex"), fakeCodex, 0o755)
+	codexHome := filepath.Join(base, "codex-home")
+	now := time.Now()
+	conversationDirectory := filepath.Join(
+		codexHome,
+		"sessions",
+		now.Format("2006"),
+		now.Format("01"),
+		now.Format("02"),
+	)
+	if err := os.MkdirAll(conversationDirectory, 0o755); err != nil {
+		t.Fatalf("create fake Codex session directory: %v", err)
+	}
+	conversationPath := filepath.Join(conversationDirectory, "rollout-2026-07-21T00-00-00-fake-session.jsonl")
+	mustWriteFile(t, conversationPath, "fake conversation\n", 0o600)
+	t.Setenv("PRECEPT_FAKE_CALL_LOG", callLog)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("PATH", binDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	stdout, stderr, exitCode, logPath := executeCLI(t, []string{
+		"verify",
+		"--agent", "codex",
+		"--jobs", "2",
+		"--json",
+		"--append-prompt", "shared verifier context",
+		sourcePath,
+	})
+	if exitCode != 0 {
+		t.Fatalf("precept verify exit code = %d\nstderr:\n%s", exitCode, stderr)
+	}
+
+	var document struct {
+		Agent struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"agent"`
+		Summary struct {
+			Total int `json:"total"`
+			Holds int `json:"holds"`
+		} `json:"summary"`
+		Outcomes []struct {
+			SessionID     string `json:"session_id"`
+			ResumeCommand string `json:"resume_command"`
+		} `json:"outcomes"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
+		t.Fatalf("decode verify JSON: %v\nstdout:\n%s", err, stdout)
+	}
+	if document.Agent.Name != "codex" || document.Agent.Version != "codex-cli fake-1.0" {
+		t.Fatalf("agent metadata = %#v", document.Agent)
+	}
+	if document.Summary.Total != 2 || document.Summary.Holds != 2 {
+		t.Fatalf("summary = %#v, want two holding claims", document.Summary)
+	}
+	if strings.Contains(stdout, `"log_path"`) {
+		t.Fatalf("verify JSON duplicated the final log-path announcement:\n%s", stdout)
+	}
+	assertFinalLogLine(t, stderr, logPath)
+	t.Cleanup(func() { _ = os.Remove(logPath) })
+	if len(document.Outcomes) != 2 {
+		t.Fatalf("outcomes = %#v, want two", document.Outcomes)
+	}
+	for _, outcome := range document.Outcomes {
+		if outcome.SessionID != "fake-session" || outcome.ResumeCommand != "codex resume fake-session" {
+			t.Fatalf("session metadata = %#v", outcome)
+		}
+	}
+
+	calls, err := os.ReadFile(callLog)
+	if err != nil {
+		t.Fatalf("read fake-agent call log: %v", err)
+	}
+	if got := len(strings.Fields(string(calls))); got != 2 {
+		t.Fatalf("fake agent calls = %d, want 2; log = %q", got, calls)
+	}
+	gotSource, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source after verification: %v", err)
+	}
+	if string(gotSource) != source {
+		t.Fatal("verification modified the source containing claims")
+	}
+	logContents, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read verification log: %v", err)
+	}
+	for _, text := range []string{"=== run ===", "=== discovery ===", "session_id: fake-session", "codex resume fake-session", "conversation_path: " + conversationPath, "=== normalized report ==="} {
+		if !strings.Contains(string(logContents), text) {
+			t.Errorf("verification log does not contain %q", text)
+		}
+	}
+	for _, unwanted := range []string{"shared verifier context", "rendered prompt", "agent stdout", "agent stderr"} {
+		if strings.Contains(string(logContents), unwanted) {
+			t.Errorf("verification log unexpectedly contains %q", unwanted)
+		}
+	}
+	entries, err := os.ReadDir(repository)
+	if err != nil {
+		t.Fatalf("read repository after verification: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != ".git" && entry.Name() != "fixture.go" {
+			t.Errorf("verification created unexpected repository entry %q", entry.Name())
+		}
+	}
+}
+
+func executeCommand(t *testing.T, arguments []string) (string, string, error) {
+	t.Helper()
+	command := NewRootCommand("0.1.0")
+	command.SetArgs(arguments)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	err := command.ExecuteContext(context.Background())
+	return stdout.String(), stderr.String(), err
+}
+
+func executeCLI(t *testing.T, arguments []string) (string, string, int, string) {
+	t.Helper()
+	command, state := newRootCommand("0.1.0")
+	command.SetArgs(arguments)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	exitCode := executeRoot(context.Background(), command, state)
+	return stdout.String(), stderr.String(), exitCode, state.verificationLogPath
+}
+
+func assertFinalLogLine(t *testing.T, stderr, logPath string) {
+	t.Helper()
+	if logPath == "" {
+		t.Fatal("verification log path is empty")
+	}
+	line := "Verification log: " + logPath + "\n"
+	if count := strings.Count(stderr, line); count != 1 {
+		t.Fatalf("verification log line count = %d, want 1; stderr:\n%s", count, stderr)
+	}
+	if !strings.HasSuffix(stderr, line) {
+		t.Fatalf("verification log is not the final output line:\n%s", stderr)
+	}
+}
+
+func mustWriteFile(t *testing.T, filename, contents string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(filename, []byte(contents), mode); err != nil {
+		t.Fatalf("write %s: %v", filename, err)
+	}
+}
+
+type cancelingWriter struct {
+	writer *bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (writer cancelingWriter) Write(contents []byte) (int, error) {
+	written, err := writer.writer.Write(contents)
+	writer.cancel()
+	return written, err
+}

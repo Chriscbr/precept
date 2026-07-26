@@ -1,0 +1,29 @@
+warning example/free.go:7: INVARIANT claim is empty
+
+✓ example.Clamp [PRECONDITION] (example/clamp.go:11)
+  [outcome]: Holds
+  [reason]: both bounds are applied
+  [supporting evidence]:
+    • min and max apply both bounds (example/clamp.go:12-14)
+  [agent session]: codex resume codex-holds-123
+
+✗ (*Cache).Get [INVARIANT] (example/cache.go:42)
+  [outcome]: Violated
+  [reason]: the zero value is reported as a hit
+  [supporting evidence]:
+    • the method always returns true (example/cache.go:46)
+  [counterexample]: calling Get with an absent key returns (_, true)
+  [agent session]: codex resume codex-violated-456
+
+? example.Config [POSTCONDITION] (example/config.go:19)
+  [outcome]: Inconclusive
+  [reason]: validity depends on values loaded at runtime
+  [supporting evidence]:
+    • runtime values are loaded from the environment (example/config.go:22-24)
+
+! example.Parse [INVARIANT] (example/parse.go:31)
+  [outcome]: Error
+  [reason]: validation timed out after 10m0s
+  [agent session]: codex resume codex-error-789
+
+4 claims: 1 holds, 1 violated, 1 inconclusive, 1 error

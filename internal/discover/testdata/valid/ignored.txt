@@ -1,0 +1,1 @@
+// POSTCONDITION: non-Go files are skipped

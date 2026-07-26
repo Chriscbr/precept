@@ -1,0 +1,4 @@
+# Go build and test outputs
+precept
+*.test
+coverage.out

@@ -1,0 +1,135 @@
+{
+  "schema_version": 4,
+  "precept_version": "0.1.0",
+  "scope": "example",
+  "agent": {
+    "name": "codex",
+    "version": "codex-cli 1.2.3",
+    "model": "gpt-5-mini",
+    "effort": "high"
+  },
+  "timing": {
+    "started_at": "2026-07-20T14:00:00Z",
+    "finished_at": "2026-07-20T14:00:01.5Z",
+    "duration_ms": 1500
+  },
+  "appended_context": true,
+  "diagnostics": [
+    {
+      "file": "example/free.go",
+      "line": 7,
+      "message": "INVARIANT claim is empty"
+    }
+  ],
+  "outcomes": [
+    {
+      "claim": {
+        "marker": "PRECONDITION",
+        "text": "result is within [lo, hi]",
+        "package": "example",
+        "kind": "func",
+        "symbol": "Clamp",
+        "file": "example/clamp.go",
+        "marker_line": 11,
+        "start_line": 12,
+        "end_line": 14
+      },
+      "result": {
+        "verdict": "holds",
+        "summary": "both bounds are applied",
+        "evidence": [
+          {
+            "file": "example/clamp.go",
+            "start_line": 12,
+            "end_line": 14,
+            "reason": "min and max apply both bounds"
+          }
+        ],
+        "counterexample": ""
+      },
+      "session_id": "codex-holds-123",
+      "resume_command": "codex resume codex-holds-123",
+      "duration_ms": 10
+    },
+    {
+      "claim": {
+        "marker": "INVARIANT",
+        "text": "missing keys are not reported as hits",
+        "package": "example",
+        "kind": "method",
+        "symbol": "(*Cache).Get",
+        "file": "example/cache.go",
+        "marker_line": 42,
+        "start_line": 43,
+        "end_line": 49
+      },
+      "result": {
+        "verdict": "violated",
+        "summary": "the zero value is reported as a hit",
+        "evidence": [
+          {
+            "file": "example/cache.go",
+            "start_line": 46,
+            "end_line": 46,
+            "reason": "the method always returns true"
+          }
+        ],
+        "counterexample": "calling Get with an absent key returns (_, true)"
+      },
+      "session_id": "codex-violated-456",
+      "resume_command": "codex resume codex-violated-456",
+      "duration_ms": 20
+    },
+    {
+      "claim": {
+        "marker": "POSTCONDITION",
+        "text": "configuration is valid",
+        "package": "example",
+        "kind": "type",
+        "symbol": "Config",
+        "file": "example/config.go",
+        "marker_line": 19,
+        "start_line": 20,
+        "end_line": 25
+      },
+      "result": {
+        "verdict": "inconclusive",
+        "summary": "validity depends on values loaded at runtime",
+        "evidence": [
+          {
+            "file": "example/config.go",
+            "start_line": 22,
+            "end_line": 24,
+            "reason": "runtime values are loaded from the environment"
+          }
+        ],
+        "counterexample": ""
+      },
+      "duration_ms": 30
+    },
+    {
+      "claim": {
+        "marker": "INVARIANT",
+        "text": "parsing never panics",
+        "package": "example",
+        "kind": "func",
+        "symbol": "Parse",
+        "file": "example/parse.go",
+        "marker_line": 31,
+        "start_line": 32,
+        "end_line": 38
+      },
+      "error": "validation timed out after 10m0s",
+      "session_id": "codex-error-789",
+      "resume_command": "codex resume codex-error-789",
+      "duration_ms": 40
+    }
+  ],
+  "summary": {
+    "total": 4,
+    "holds": 1,
+    "violated": 1,
+    "inconclusive": 1,
+    "errors": 1
+  }
+}
