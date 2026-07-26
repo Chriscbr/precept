@@ -168,3 +168,4 @@ Here are some ideas for future features:
 - [ ] Add a `prompt` or `inspect` command to view the prompt that will be sent to the agent.
 - [ ] Add a `compare` command to compare the JSON output of two verification runs for the purpose of identifying new violations, moved claims, agent verdict changes, etc.
 - [ ] Support adding optional IDs to claims to allow for tracking them across verification runs (e.g. "// INVARIANT [buffer-single-owner]: ...")
+- [ ] Add a `resolve` command (and optional `--resolve` flag on `verify`) to automatically resolve claims that don't hold by suggesting fixes or resolutions based on the context of the codebase. The proposed resolutions could be categorized into `change-code`, `change-claim`, `clarify-claim`, `split-claim`, `move-claim`, `remove-claim`, `add-enforcement`, `add-context`, `defer-to-author`, `not-verifiable`, etc.
