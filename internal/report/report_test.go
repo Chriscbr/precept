@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"precept/internal/discover"
-	"precept/internal/verify"
+	"github.com/Chriscbr/precept/internal/discover"
+	"github.com/Chriscbr/precept/internal/verify"
 )
 
 func fixtureRun() Run {

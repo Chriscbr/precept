@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"precept/internal/discover"
+	"github.com/Chriscbr/precept/internal/discover"
 )
 
 type validatorFunc func(context.Context, discover.Claim) (Validation, error)

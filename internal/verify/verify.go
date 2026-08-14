@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"precept/internal/discover"
-	"precept/internal/textsafe"
+	"github.com/Chriscbr/precept/internal/discover"
+	"github.com/Chriscbr/precept/internal/textsafe"
 )
 
 // Run validates claims with at most options.Jobs concurrent calls to validator.

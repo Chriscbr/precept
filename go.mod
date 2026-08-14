@@ -1,4 +1,4 @@
-module precept
+module github.com/Chriscbr/precept
 
 go 1.25.11
 

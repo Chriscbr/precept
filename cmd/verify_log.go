@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"precept/internal/discover"
-	"precept/internal/harness"
-	"precept/internal/report"
-	"precept/internal/textsafe"
-	"precept/internal/verify"
+	"github.com/Chriscbr/precept/internal/discover"
+	"github.com/Chriscbr/precept/internal/harness"
+	"github.com/Chriscbr/precept/internal/report"
+	"github.com/Chriscbr/precept/internal/textsafe"
+	"github.com/Chriscbr/precept/internal/verify"
 )
 
 type verificationLog struct {

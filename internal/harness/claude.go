@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"precept/internal/prompt"
+	"github.com/Chriscbr/precept/internal/prompt"
 )
 
 type claudeRunner struct {

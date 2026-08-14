@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"precept/internal/prompt"
+	"github.com/Chriscbr/precept/internal/prompt"
 )
 
 // Request contains the per-claim inputs shared by all harnesses.

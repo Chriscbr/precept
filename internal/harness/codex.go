@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"precept/internal/prompt"
+	"github.com/Chriscbr/precept/internal/prompt"
 )
 
 type codexRunner struct {

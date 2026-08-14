@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"precept/internal/textsafe"
+	"github.com/Chriscbr/precept/internal/textsafe"
 )
 
 type exitError struct {

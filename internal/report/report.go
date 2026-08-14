@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"golang.org/x/term"
-	"precept/internal/discover"
-	"precept/internal/textsafe"
-	"precept/internal/verify"
+	"github.com/Chriscbr/precept/internal/discover"
+	"github.com/Chriscbr/precept/internal/textsafe"
+	"github.com/Chriscbr/precept/internal/verify"
 )
 
 // JSONSchemaVersion changes when the JSON document contract changes incompatibly.

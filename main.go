@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"precept/cmd"
+	"github.com/Chriscbr/precept/cmd"
 )
 
 // Version can be overridden at build time with -ldflags.

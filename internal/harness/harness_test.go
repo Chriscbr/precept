@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"precept/internal/prompt"
+	"github.com/Chriscbr/precept/internal/prompt"
 )
 
 const validResultJSON = `{"verdict":"holds","summary":"the bound is applied","evidence":[{"file":"src/value.go","start_line":12,"end_line":14,"reason":"the return applies the bound"}],"counterexample":""}`

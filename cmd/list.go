@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"precept/internal/discover"
-	"precept/internal/textsafe"
+	"github.com/Chriscbr/precept/internal/discover"
+	"github.com/Chriscbr/precept/internal/textsafe"
 )
 
 type listDocument struct {

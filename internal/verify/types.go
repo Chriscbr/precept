@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"precept/internal/discover"
+	"github.com/Chriscbr/precept/internal/discover"
 )
 
 // Verdict is the semantic outcome of validating a claim.
