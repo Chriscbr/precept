@@ -171,3 +171,8 @@ Here are some ideas for future features:
 - [ ] Add a `resolve` command (and optional `--resolve` flag on `verify`) to automatically resolve claims that don't hold by suggesting fixes or resolutions based on the context of the codebase. The proposed resolutions could be categorized into `change-code`, `change-claim`, `clarify-claim`, `split-claim`, `move-claim`, `remove-claim`, `add-enforcement`, `add-context`, `defer-to-author`, `not-verifiable`, etc.
 - [ ] Add a `--claim` flag to the `verify` command to only verify a specific claim (may be repeated to verify multiple individual claims).
 - [ ] Support claim IDs (e.g. "// INVARIANT buffer-single-owner: ...") to give claims stable names for use in the `--claim` flag and in CLI outputs. Unnamed claims should be given a stable default name (e.g. "newbuffer-precondition-1", "buffer-close-postcondition-2", etc.) based on the position of the claim in the file and the claim type.
+- [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
+- [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
+- [ ] Improve the readability of the `list` command's output.
+- [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.
+- [ ] Support programming languages other than Go.
