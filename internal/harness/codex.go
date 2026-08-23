@@ -19,6 +19,8 @@ type codexRunner struct {
 	now        func() time.Time
 }
 
+const schemaFileMode = 0o600
+
 func (runner *codexRunner) Name() string {
 	return "codex"
 }
@@ -28,81 +30,197 @@ func (runner *codexRunner) Preflight(ctx context.Context) (Info, error) {
 }
 
 func (runner *codexRunner) Run(ctx context.Context, request Request) (RunResult, error) {
-	root, err := validateRequest(request)
-	if err != nil {
-		return RunResult{}, fmt.Errorf("run %s: %w", runner.Name(), err)
-	}
-	executable, err := resolveExecutable(runner.Name(), runner.executable)
-	if err != nil {
-		return RunResult{}, err
-	}
+	execution := &codexExecution{runner: runner, ctx: ctx, request: request}
+	defer execution.cleanup()
+	execution.validateRequest()
+	execution.resolveExecutable()
+	execution.createSchemaDirectory()
+	execution.writeSchema()
+	execution.buildArguments()
+	execution.runAgent()
+	execution.decodeOutput()
+	execution.findConversation()
+	execution.checkExecution()
+	execution.parseResult()
+	return execution.result, execution.err
+}
 
-	temporaryDirectory, err := makeTempDirOutside(root, "precept-codex-")
-	if err != nil {
-		return RunResult{}, fmt.Errorf("run %s: create temporary schema directory: %w", runner.Name(), err)
-	}
-	defer func() {
-		_ = os.RemoveAll(temporaryDirectory)
-	}()
-	schemaPath := filepath.Join(temporaryDirectory, "result.schema.json")
-	if err := os.WriteFile(schemaPath, prompt.SchemaBytes(), 0o600); err != nil {
-		return RunResult{}, fmt.Errorf("run %s: write temporary result schema: %w", runner.Name(), err)
-	}
+type codexExecution struct {
+	runner             *codexRunner
+	ctx                context.Context
+	request            Request
+	root               string
+	executable         string
+	temporaryDirectory string
+	schemaPath         string
+	arguments          []string
+	output             commandOutput
+	runErr             error
+	decoded            decodedOutput
+	decodeErr          error
+	result             RunResult
+	err                error
+}
 
+func (execution *codexExecution) validateRequest() {
+	execution.root, execution.err = validateRequest(execution.request)
+	if execution.err != nil {
+		execution.err = fmt.Errorf("run %s: %w", execution.runner.Name(), execution.err)
+	}
+}
+
+func (execution *codexExecution) resolveExecutable() {
+	if execution.err == nil {
+		execution.executable, execution.err = resolveExecutable(
+			execution.runner.Name(),
+			execution.runner.executable,
+		)
+	}
+}
+
+func (execution *codexExecution) createSchemaDirectory() {
+	if execution.err != nil {
+		return
+	}
+	execution.temporaryDirectory, execution.err = makeTempDirOutside(execution.root, "precept-codex-")
+	if execution.err != nil {
+		execution.err = fmt.Errorf(
+			"run %s: create temporary schema directory: %w",
+			execution.runner.Name(),
+			execution.err,
+		)
+	}
+}
+
+func (execution *codexExecution) cleanup() {
+	if execution.temporaryDirectory != "" {
+		_ = os.RemoveAll(execution.temporaryDirectory)
+	}
+}
+
+func (execution *codexExecution) writeSchema() {
+	if execution.err != nil {
+		return
+	}
+	execution.schemaPath = filepath.Join(execution.temporaryDirectory, "result.schema.json")
+	execution.err = os.WriteFile(execution.schemaPath, prompt.SchemaBytes(), schemaFileMode)
+	if execution.err != nil {
+		execution.err = fmt.Errorf(
+			"run %s: write temporary result schema: %w",
+			execution.runner.Name(),
+			execution.err,
+		)
+	}
+}
+
+func (execution *codexExecution) buildArguments() {
+	if execution.err != nil {
+		return
+	}
 	// --ask-for-approval is a global option and must precede the exec
 	// subcommand. Model and effort are global as well, which keeps their
 	// placement compatible with current Codex CLI releases.
-	args := []string{"--ask-for-approval", "never"}
-	if request.Model != "" {
-		args = append(args, "--model", request.Model)
+	execution.arguments = []string{"--ask-for-approval", "never"}
+	if execution.request.Model != "" {
+		execution.arguments = append(execution.arguments, "--model", execution.request.Model)
 	}
-	if request.Effort != "" {
-		args = append(args, "-c", "model_reasoning_effort="+request.Effort)
+	if execution.request.Effort != "" {
+		execution.arguments = append(
+			execution.arguments,
+			"-c",
+			"model_reasoning_effort="+execution.request.Effort,
+		)
 	}
 	// Repository AGENTS.md files are source-controlled evidence for this task,
 	// not trusted verifier instructions. Keep them out of Codex's higher-
 	// priority project-instructions prompt, and disable Codex's otherwise-
 	// default cached web-search tool.
-	args = append(args,
+	execution.arguments = append(execution.arguments,
 		"-c", `web_search="disabled"`,
 		"-c", "project_doc_max_bytes=0",
-	)
-	args = append(args,
 		"exec",
 		"--ignore-user-config",
 		"--ignore-rules",
 		"--sandbox", "read-only",
-		"--cd", root,
-		"--output-schema", schemaPath,
+		"--cd", execution.root,
+		"--output-schema", execution.schemaPath,
 		"--color", "never",
 		"--json",
 		"-",
 	)
+}
 
-	output, runErr := execute(ctx, executable, args, root, request.Prompt, maxAgentOutputBytes)
-	runResult := RunResult{}
-	decoded, decodeErr := decodeCodexOutput(output.stdout)
-	runResult.SessionID = decoded.sessionID
-	if runner.now == nil {
-		runResult.ConversationPath = findCodexConversationPath(root, decoded.sessionID)
-	} else {
-		runResult.ConversationPath = findCodexConversationPathAt(root, decoded.sessionID, runner.now())
+func (execution *codexExecution) runAgent() {
+	if execution.err != nil {
+		return
 	}
-	if runErr != nil {
-		return runResult, processError("run "+runner.Name(), runErr, ctx.Err(), output)
+	execution.output, execution.runErr = execute(
+		execution.ctx,
+		execution.executable,
+		execution.arguments,
+		execution.root,
+		execution.request.Prompt,
+		maxAgentOutputBytes,
+	)
+}
+
+func (execution *codexExecution) decodeOutput() {
+	if execution.err == nil {
+		execution.decoded, execution.decodeErr = decodeCodexOutput(execution.output.stdout)
+		execution.result.SessionID = execution.decoded.sessionID
 	}
-	if err := rejectTruncatedOutput(runner.Name(), output); err != nil {
-		return runResult, err
+}
+
+func (execution *codexExecution) findConversation() {
+	if execution.err != nil {
+		return
 	}
-	if decodeErr != nil {
-		return runResult, fmt.Errorf("run %s: %w", runner.Name(), decodeErr)
+	if execution.runner.now == nil {
+		execution.result.ConversationPath = findCodexConversationPath(
+			execution.root,
+			execution.decoded.sessionID,
+		)
+		return
 	}
-	result, err := prompt.ParseResult(decoded.payload)
-	if err != nil {
-		return runResult, fmt.Errorf("run %s: invalid final response: %w", runner.Name(), err)
+	execution.result.ConversationPath = findCodexConversationPathAt(
+		execution.root,
+		execution.decoded.sessionID,
+		execution.runner.now(),
+	)
+}
+
+func (execution *codexExecution) checkExecution() {
+	if execution.err != nil {
+		return
 	}
-	runResult.Result = result
-	return runResult, nil
+	truncationErr := rejectTruncatedOutput(execution.runner.Name(), execution.output)
+	switch {
+	case execution.runErr != nil:
+		execution.err = processError(
+			"run "+execution.runner.Name(),
+			execution.runErr,
+			execution.ctx.Err(),
+			execution.output,
+		)
+	case truncationErr != nil:
+		execution.err = truncationErr
+	case execution.decodeErr != nil:
+		execution.err = fmt.Errorf("run %s: %w", execution.runner.Name(), execution.decodeErr)
+	}
+}
+
+func (execution *codexExecution) parseResult() {
+	if execution.err != nil {
+		return
+	}
+	execution.result.Result, execution.err = prompt.ParseResult(execution.decoded.payload)
+	if execution.err != nil {
+		execution.err = fmt.Errorf(
+			"run %s: invalid final response: %w",
+			execution.runner.Name(),
+			execution.err,
+		)
+	}
 }
 
 type codexEvent struct {
@@ -125,66 +243,111 @@ type codexContent struct {
 }
 
 func decodeCodexOutput(output []byte) (decodedOutput, error) {
-	var decoded decodedOutput
-	scanner := bufio.NewScanner(bytes.NewReader(output))
-	scanner.Buffer(make([]byte, 64<<10), maxAgentOutputBytes)
-	var finalMessage []byte
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
+	decoder := &codexOutputDecoder{scanner: bufio.NewScanner(bytes.NewReader(output))}
+	decoder.scanner.Buffer(make([]byte, 64<<10), maxAgentOutputBytes)
+	decoder.decodeLines()
+	decoder.finish()
+	return decoder.decoded, decoder.err
+}
 
-		var event codexEvent
-		if err := json.Unmarshal(line, &event); err != nil {
-			return decoded, fmt.Errorf("decode JSONL event on line %d: %w", lineNumber, err)
-		}
-		if event.Type == "thread.started" {
-			if sessionID := strings.TrimSpace(event.ThreadID); sessionID != "" {
-				decoded.sessionID = sessionID
-			}
-		}
-		if event.Type == "error" {
-			detail := strings.TrimSpace(event.Message)
-			if detail == "" {
-				detail = "agent emitted an error event"
-			}
-			return decoded, fmt.Errorf("agent error: %s", detail)
-		}
+type codexOutputDecoder struct {
+	scanner      *bufio.Scanner
+	decoded      decodedOutput
+	finalMessage []byte
+	lineNumber   int
+	err          error
+}
 
-		if event.Type == "item.completed" && event.Item != nil && event.Item.Type == "agent_message" {
-			message, err := codexItemText(*event.Item)
-			if err != nil {
-				return decoded, fmt.Errorf("decode final assistant message on line %d: %w", lineNumber, err)
-			}
-			if len(bytes.TrimSpace(message)) > 0 {
-				finalMessage = bytes.Clone(message)
-			}
-			continue
-		}
-
-		// Some older JSONL variants emit an agent_message directly rather than
-		// wrapping it in item.completed.
-		if event.Type == "agent_message" {
-			message, err := rawText(event.Text)
-			if err != nil {
-				return decoded, fmt.Errorf("decode final assistant message on line %d: %w", lineNumber, err)
-			}
-			if len(bytes.TrimSpace(message)) > 0 {
-				finalMessage = bytes.Clone(message)
-			}
+func (decoder *codexOutputDecoder) decodeLines() {
+	for decoder.scanner.Scan() {
+		decoder.lineNumber++
+		decoder.decodeLine(decoder.scanner.Bytes())
+		if decoder.err != nil {
+			break
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return decoded, fmt.Errorf("scan JSONL output: %w", err)
+}
+
+func (decoder *codexOutputDecoder) decodeLine(rawLine []byte) {
+	line := bytes.TrimSpace(rawLine)
+	if len(line) == 0 {
+		return
 	}
-	if len(finalMessage) == 0 {
-		return decoded, fmt.Errorf("JSONL output did not contain a final assistant message")
+	var event codexEvent
+	if err := json.Unmarshal(line, &event); err != nil {
+		decoder.err = fmt.Errorf("decode JSONL event on line %d: %w", decoder.lineNumber, err)
+		return
 	}
-	decoded.payload = finalMessage
-	return decoded, nil
+	decoder.captureSession(event)
+	decoder.captureError(event)
+	decoder.captureCompletedMessage(event)
+	decoder.captureLegacyMessage(event)
+}
+
+func (decoder *codexOutputDecoder) captureSession(event codexEvent) {
+	if event.Type != "thread.started" {
+		return
+	}
+	if sessionID := strings.TrimSpace(event.ThreadID); sessionID != "" {
+		decoder.decoded.sessionID = sessionID
+	}
+}
+
+func (decoder *codexOutputDecoder) captureError(event codexEvent) {
+	if decoder.err != nil || event.Type != "error" {
+		return
+	}
+	detail := strings.TrimSpace(event.Message)
+	if detail == "" {
+		detail = "agent emitted an error event"
+	}
+	decoder.err = fmt.Errorf("agent error: %s", detail)
+}
+
+func (decoder *codexOutputDecoder) captureCompletedMessage(event codexEvent) {
+	if decoder.err != nil || event.Type != "item.completed" || event.Item == nil {
+		return
+	}
+	if event.Item.Type != "agent_message" {
+		return
+	}
+	message, err := codexItemText(*event.Item)
+	decoder.captureMessage(message, err)
+}
+
+func (decoder *codexOutputDecoder) captureLegacyMessage(event codexEvent) {
+	// Some older JSONL variants emit an agent_message directly rather than
+	// wrapping it in item.completed.
+	if decoder.err != nil || event.Type != "agent_message" {
+		return
+	}
+	message, err := rawText(event.Text)
+	decoder.captureMessage(message, err)
+}
+
+func (decoder *codexOutputDecoder) captureMessage(message []byte, err error) {
+	if err != nil {
+		decoder.err = fmt.Errorf("decode final assistant message on line %d: %w", decoder.lineNumber, err)
+		return
+	}
+	if len(bytes.TrimSpace(message)) > 0 {
+		decoder.finalMessage = bytes.Clone(message)
+	}
+}
+
+func (decoder *codexOutputDecoder) finish() {
+	if decoder.err != nil {
+		return
+	}
+	if err := decoder.scanner.Err(); err != nil {
+		decoder.err = fmt.Errorf("scan JSONL output: %w", err)
+		return
+	}
+	if len(decoder.finalMessage) == 0 {
+		decoder.err = fmt.Errorf("JSONL output did not contain a final assistant message")
+		return
+	}
+	decoder.decoded.payload = decoder.finalMessage
 }
 
 func codexItemText(item codexItem) ([]byte, error) {
@@ -209,17 +372,18 @@ func codexItemText(item codexItem) ([]byte, error) {
 
 func rawText(raw json.RawMessage) ([]byte, error) {
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, nil
+	var result []byte
+	var err error
+	switch {
+	case len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")):
+	case trimmed[0] != '"':
+		result = bytes.Clone(trimmed)
+	default:
+		var value string
+		err = json.Unmarshal(trimmed, &value)
+		result = []byte(value)
 	}
-	if trimmed[0] != '"' {
-		return bytes.Clone(trimmed), nil
-	}
-	var text string
-	if err := json.Unmarshal(trimmed, &text); err != nil {
-		return nil, err
-	}
-	return []byte(text), nil
+	return result, err
 }
 
 func makeTempDirOutside(repositoryRoot, pattern string) (string, error) {

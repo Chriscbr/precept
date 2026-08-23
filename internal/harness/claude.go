@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Chriscbr/precept/internal/prompt"
 )
@@ -22,16 +23,54 @@ func (runner *claudeRunner) Preflight(ctx context.Context) (Info, error) {
 }
 
 func (runner *claudeRunner) Run(ctx context.Context, request Request) (RunResult, error) {
-	root, err := validateRequest(request)
-	if err != nil {
-		return RunResult{}, fmt.Errorf("run %s: %w", runner.Name(), err)
-	}
-	executable, err := resolveExecutable(runner.Name(), runner.executable)
-	if err != nil {
-		return RunResult{}, err
-	}
+	execution := &claudeExecution{runner: runner, ctx: ctx, request: request}
+	execution.validateRequest()
+	execution.resolveExecutable()
+	execution.buildArguments()
+	execution.runAgent()
+	execution.decodeOutput()
+	execution.findConversation()
+	execution.checkExecution()
+	execution.parseResult()
+	return execution.result, execution.err
+}
 
-	args := []string{
+type claudeExecution struct {
+	runner     *claudeRunner
+	ctx        context.Context
+	request    Request
+	root       string
+	executable string
+	arguments  []string
+	output     commandOutput
+	runErr     error
+	decoded    decodedOutput
+	decodeErr  error
+	result     RunResult
+	err        error
+}
+
+func (execution *claudeExecution) validateRequest() {
+	execution.root, execution.err = validateRequest(execution.request)
+	if execution.err != nil {
+		execution.err = fmt.Errorf("run %s: %w", execution.runner.Name(), execution.err)
+	}
+}
+
+func (execution *claudeExecution) resolveExecutable() {
+	if execution.err == nil {
+		execution.executable, execution.err = resolveExecutable(
+			execution.runner.Name(),
+			execution.runner.executable,
+		)
+	}
+}
+
+func (execution *claudeExecution) buildArguments() {
+	if execution.err != nil {
+		return
+	}
+	execution.arguments = []string{
 		"--print",
 		"--output-format", "json",
 		"--json-schema", string(prompt.SchemaBytes()),
@@ -43,95 +82,191 @@ func (runner *claudeRunner) Run(ctx context.Context, request Request) (RunResult
 		"--permission-mode", "dontAsk",
 		"--tools", "Read,Grep,Glob",
 	}
-	if request.Model != "" {
-		args = append(args, "--model", request.Model)
+	if execution.request.Model != "" {
+		execution.arguments = append(execution.arguments, "--model", execution.request.Model)
 	}
-	if request.Effort != "" {
-		args = append(args, "--effort", request.Effort)
+	if execution.request.Effort != "" {
+		execution.arguments = append(execution.arguments, "--effort", execution.request.Effort)
 	}
+}
 
-	output, runErr := execute(ctx, executable, args, root, request.Prompt, maxAgentOutputBytes)
-	runResult := RunResult{}
-	decoded, decodeErr := decodeClaudeOutput(output.stdout)
-	runResult.SessionID = decoded.sessionID
-	runResult.ConversationPath = findClaudeConversationPath(root, decoded.sessionID)
-	if runErr != nil {
-		return runResult, processError("run "+runner.Name(), runErr, ctx.Err(), output)
+func (execution *claudeExecution) runAgent() {
+	if execution.err != nil {
+		return
 	}
-	if err := rejectTruncatedOutput(runner.Name(), output); err != nil {
-		return runResult, err
+	execution.output, execution.runErr = execute(
+		execution.ctx,
+		execution.executable,
+		execution.arguments,
+		execution.root,
+		execution.request.Prompt,
+		maxAgentOutputBytes,
+	)
+}
+
+func (execution *claudeExecution) decodeOutput() {
+	if execution.err == nil {
+		execution.decoded, execution.decodeErr = decodeClaudeOutput(execution.output.stdout)
+		execution.result.SessionID = execution.decoded.sessionID
 	}
-	if decodeErr != nil {
-		return runResult, fmt.Errorf("run %s: %w", runner.Name(), decodeErr)
+}
+
+func (execution *claudeExecution) findConversation() {
+	if execution.err == nil {
+		execution.result.ConversationPath = findClaudeConversationPath(
+			execution.root,
+			execution.decoded.sessionID,
+		)
 	}
-	result, err := prompt.ParseResult(decoded.payload)
-	if err != nil {
-		return runResult, fmt.Errorf("run %s: invalid final response: %w", runner.Name(), err)
+}
+
+func (execution *claudeExecution) checkExecution() {
+	if execution.err != nil {
+		return
 	}
-	runResult.Result = result
-	return runResult, nil
+	truncationErr := rejectTruncatedOutput(execution.runner.Name(), execution.output)
+	switch {
+	case execution.runErr != nil:
+		execution.err = processError(
+			"run "+execution.runner.Name(),
+			execution.runErr,
+			execution.ctx.Err(),
+			execution.output,
+		)
+	case truncationErr != nil:
+		execution.err = truncationErr
+	case execution.decodeErr != nil:
+		execution.err = fmt.Errorf("run %s: %w", execution.runner.Name(), execution.decodeErr)
+	}
+}
+
+func (execution *claudeExecution) parseResult() {
+	if execution.err != nil {
+		return
+	}
+	execution.result.Result, execution.err = prompt.ParseResult(execution.decoded.payload)
+	if execution.err != nil {
+		execution.err = fmt.Errorf(
+			"run %s: invalid final response: %w",
+			execution.runner.Name(),
+			execution.err,
+		)
+	}
 }
 
 func decodeClaudeOutput(output []byte) (decodedOutput, error) {
-	var decoded decodedOutput
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(output, &fields); err != nil {
-		return decoded, fmt.Errorf("decode JSON output envelope: %w", err)
-	}
-	if rawSessionID, ok := fields["session_id"]; ok {
-		if err := json.Unmarshal(rawSessionID, &decoded.sessionID); err != nil {
-			return decoded, fmt.Errorf("decode JSON output envelope session_id: %w", err)
-		}
-		decoded.sessionID = string(bytes.TrimSpace([]byte(decoded.sessionID)))
-	}
-	if _, directResult := fields["verdict"]; directResult {
-		decoded.payload = bytes.TrimSpace(output)
-		return decoded, nil
-	}
+	decoder := &claudeOutputDecoder{output: output}
+	decoder.decodeEnvelope()
+	decoder.decodeSessionID()
+	decoder.captureDirectResult()
+	decoder.captureAgentError()
+	decoder.capturePayload()
+	return decoder.decoded, decoder.err
+}
 
-	if rawError, ok := fields["is_error"]; ok {
-		var isError bool
-		if err := json.Unmarshal(rawError, &isError); err != nil {
-			return decoded, fmt.Errorf("decode JSON output envelope is_error: %w", err)
-		}
-		if isError {
-			detail := claudeEnvelopeText(fields["result"])
-			if detail == "" {
-				detail = "agent returned an error result"
-			}
-			return decoded, fmt.Errorf("agent error: %s", detail)
-		}
-	}
+type claudeOutputDecoder struct {
+	output  []byte
+	fields  map[string]json.RawMessage
+	decoded decodedOutput
+	err     error
+	done    bool
+}
 
-	if structured, ok := fields["structured_output"]; ok && !bytes.Equal(bytes.TrimSpace(structured), []byte("null")) {
-		payload, err := decodeEnvelopePayload("structured_output", structured)
-		decoded.payload = payload
-		return decoded, err
+func (decoder *claudeOutputDecoder) decodeEnvelope() {
+	decoder.err = json.Unmarshal(decoder.output, &decoder.fields)
+	if decoder.err != nil {
+		decoder.err = fmt.Errorf("decode JSON output envelope: %w", decoder.err)
 	}
-	if result, ok := fields["result"]; ok {
-		payload, err := decodeEnvelopePayload("result", result)
-		decoded.payload = payload
-		return decoded, err
+}
+
+func (decoder *claudeOutputDecoder) decodeSessionID() {
+	if decoder.err != nil {
+		return
 	}
-	return decoded, fmt.Errorf("JSON output envelope did not contain structured_output or result")
+	rawSessionID, exists := decoder.fields["session_id"]
+	if !exists {
+		return
+	}
+	decoder.err = json.Unmarshal(rawSessionID, &decoder.decoded.sessionID)
+	if decoder.err != nil {
+		decoder.err = fmt.Errorf("decode JSON output envelope session_id: %w", decoder.err)
+		return
+	}
+	decoder.decoded.sessionID = strings.TrimSpace(decoder.decoded.sessionID)
+}
+
+func (decoder *claudeOutputDecoder) captureDirectResult() {
+	if decoder.err != nil {
+		return
+	}
+	if _, directResult := decoder.fields["verdict"]; directResult {
+		decoder.decoded.payload = bytes.TrimSpace(decoder.output)
+		decoder.done = true
+	}
+}
+
+func (decoder *claudeOutputDecoder) captureAgentError() {
+	if decoder.err != nil || decoder.done {
+		return
+	}
+	rawError, exists := decoder.fields["is_error"]
+	if !exists {
+		return
+	}
+	var isError bool
+	decoder.err = json.Unmarshal(rawError, &isError)
+	if decoder.err != nil {
+		decoder.err = fmt.Errorf("decode JSON output envelope is_error: %w", decoder.err)
+		return
+	}
+	if isError {
+		detail := claudeEnvelopeText(decoder.fields["result"])
+		if detail == "" {
+			detail = "agent returned an error result"
+		}
+		decoder.err = fmt.Errorf("agent error: %s", detail)
+	}
+}
+
+func (decoder *claudeOutputDecoder) capturePayload() {
+	if decoder.err != nil || decoder.done {
+		return
+	}
+	structured, hasStructured := decoder.fields["structured_output"]
+	structuredIsNull := bytes.Equal(bytes.TrimSpace(structured), []byte("null"))
+	if hasStructured && !structuredIsNull {
+		decoder.decoded.payload, decoder.err = decodeEnvelopePayload("structured_output", structured)
+		return
+	}
+	result, hasResult := decoder.fields["result"]
+	if hasResult {
+		decoder.decoded.payload, decoder.err = decodeEnvelopePayload("result", result)
+		return
+	}
+	decoder.err = fmt.Errorf("JSON output envelope did not contain structured_output or result")
 }
 
 func decodeEnvelopePayload(field string, raw json.RawMessage) ([]byte, error) {
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, fmt.Errorf("JSON output envelope field %s was empty", field)
+	var payload []byte
+	var err error
+	switch {
+	case len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")):
+		err = fmt.Errorf("JSON output envelope field %s was empty", field)
+	case trimmed[0] != '"':
+		payload = trimmed
+	default:
+		var text string
+		err = json.Unmarshal(trimmed, &text)
+		if err != nil {
+			err = fmt.Errorf("decode JSON output envelope field %s: %w", field, err)
+		} else if len(bytes.TrimSpace([]byte(text))) == 0 {
+			err = fmt.Errorf("JSON output envelope field %s was empty", field)
+		} else {
+			payload = []byte(text)
+		}
 	}
-	if trimmed[0] != '"' {
-		return trimmed, nil
-	}
-	var text string
-	if err := json.Unmarshal(trimmed, &text); err != nil {
-		return nil, fmt.Errorf("decode JSON output envelope field %s: %w", field, err)
-	}
-	if len(bytes.TrimSpace([]byte(text))) == 0 {
-		return nil, fmt.Errorf("JSON output envelope field %s was empty", field)
-	}
-	return []byte(text), nil
+	return payload, err
 }
 
 func claudeEnvelopeText(raw json.RawMessage) string {

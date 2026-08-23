@@ -69,59 +69,96 @@ func ScanContext(ctx context.Context, repoRoot, scope string) (Result, error) {
 type walkDirFunc func(string, fs.WalkDirFunc) error
 
 func scanContextWithWalk(ctx context.Context, repoRoot, scope string, walk walkDirFunc) (Result, error) {
-	if ctx == nil {
-		return Result{}, fmt.Errorf("scan context is nil")
+	execution := &scanExecution{
+		ctx:      ctx,
+		repoRoot: repoRoot,
+		scope:    scope,
+		walk:     walk,
+		result: Result{
+			Claims:      make([]Claim, 0),
+			Diagnostics: make([]Diagnostic, 0),
+		},
 	}
-	if walk == nil {
-		return Result{}, fmt.Errorf("scan walk function is nil")
-	}
-	if err := ctx.Err(); err != nil {
-		return Result{}, err
-	}
+	execution.validateInputs()
+	execution.resolvePaths()
+	execution.walkScope()
+	execution.sortResult()
+	execution.checkContext()
+	return execution.result, execution.err
+}
 
-	repoRoot, scope, err := validatePaths(repoRoot, scope)
-	if err != nil {
-		return Result{}, err
-	}
+type scanExecution struct {
+	ctx      context.Context
+	repoRoot string
+	scope    string
+	walk     walkDirFunc
+	result   Result
+	err      error
+}
 
-	result := Result{
-		Claims:      make([]Claim, 0),
-		Diagnostics: make([]Diagnostic, 0),
+func (execution *scanExecution) validateInputs() {
+	switch {
+	case execution.ctx == nil:
+		execution.err = fmt.Errorf("scan context is nil")
+	case execution.walk == nil:
+		execution.err = fmt.Errorf("scan walk function is nil")
+	default:
+		execution.err = execution.ctx.Err()
 	}
-	err = walk(scope, func(path string, entry fs.DirEntry, walkErr error) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() || filepath.Ext(path) != ".go" {
-			return nil
-		}
+}
 
-		fileResult, err := scanFile(ctx, repoRoot, path)
-		if err != nil {
-			return err
-		}
-		result.Claims = append(result.Claims, fileResult.Claims...)
-		result.Diagnostics = append(result.Diagnostics, fileResult.Diagnostics...)
+func (execution *scanExecution) resolvePaths() {
+	if execution.err != nil {
+		return
+	}
+	execution.repoRoot, execution.scope, execution.err = validatePaths(execution.repoRoot, execution.scope)
+}
+
+func (execution *scanExecution) walkScope() {
+	if execution.err != nil {
+		return
+	}
+	execution.err = execution.walk(execution.scope, execution.visit)
+	if execution.err != nil {
+		execution.result = Result{}
+		execution.err = fmt.Errorf("scan claims in %q: %w", execution.scope, execution.err)
+	}
+}
+
+func (execution *scanExecution) visit(path string, entry fs.DirEntry, walkErr error) error {
+	if err := execution.ctx.Err(); err != nil {
+		return err
+	}
+	if walkErr != nil {
+		return walkErr
+	}
+	if entry.Type()&os.ModeSymlink != 0 {
+		return skipSymbolicLink(entry)
+	}
+	if entry.IsDir() || filepath.Ext(path) != ".go" {
 		return nil
-	})
+	}
+	fileResult, err := scanFile(execution.ctx, execution.repoRoot, path)
 	if err == nil {
-		err = ctx.Err()
+		execution.result.Claims = append(execution.result.Claims, fileResult.Claims...)
+		execution.result.Diagnostics = append(execution.result.Diagnostics, fileResult.Diagnostics...)
 	}
-	if err != nil {
-		return Result{}, fmt.Errorf("scan claims in %q: %w", scope, err)
-	}
+	return err
+}
 
-	sort.Slice(result.Claims, func(i, j int) bool {
-		left, right := result.Claims[i], result.Claims[j]
+func skipSymbolicLink(entry fs.DirEntry) error {
+	if entry.IsDir() {
+		return filepath.SkipDir
+	}
+	return nil
+}
+
+func (execution *scanExecution) sortResult() {
+	if execution.err != nil {
+		return
+	}
+	sort.Slice(execution.result.Claims, func(i, j int) bool {
+		left, right := execution.result.Claims[i], execution.result.Claims[j]
 		if left.File != right.File {
 			return left.File < right.File
 		}
@@ -136,8 +173,8 @@ func scanContextWithWalk(ctx context.Context, repoRoot, scope string, walk walkD
 		}
 		return left.Marker < right.Marker
 	})
-	sort.Slice(result.Diagnostics, func(i, j int) bool {
-		left, right := result.Diagnostics[i], result.Diagnostics[j]
+	sort.Slice(execution.result.Diagnostics, func(i, j int) bool {
+		left, right := execution.result.Diagnostics[i], execution.result.Diagnostics[j]
 		if left.File != right.File {
 			return left.File < right.File
 		}
@@ -146,118 +183,217 @@ func scanContextWithWalk(ctx context.Context, repoRoot, scope string, walk walkD
 		}
 		return left.Message < right.Message
 	})
-	if err := ctx.Err(); err != nil {
-		return Result{}, fmt.Errorf("scan claims in %q: %w", scope, err)
-	}
+}
 
-	return result, nil
+func (execution *scanExecution) checkContext() {
+	if execution.err != nil {
+		return
+	}
+	if err := execution.ctx.Err(); err != nil {
+		execution.result = Result{}
+		execution.err = fmt.Errorf("scan claims in %q: %w", execution.scope, err)
+	}
 }
 
 func validatePaths(repoRoot, scope string) (string, string, error) {
-	if !filepath.IsAbs(repoRoot) {
-		return "", "", fmt.Errorf("repository root must be an absolute path: %q", repoRoot)
-	}
-	if !filepath.IsAbs(scope) {
-		return "", "", fmt.Errorf("scope must be an absolute path: %q", scope)
-	}
+	validation := &pathValidation{repoRoot: repoRoot, scope: scope}
+	validation.requireAbsolutePaths()
+	validation.cleanAndRelativize()
+	validation.inspectRepositoryRoot()
+	validation.inspectScopeComponents()
+	validation.inspectScope()
+	return validation.repoRoot, validation.scope, validation.err
+}
 
-	repoRoot = filepath.Clean(repoRoot)
-	scope = filepath.Clean(scope)
-	rel, err := filepath.Rel(repoRoot, scope)
+type pathValidation struct {
+	repoRoot string
+	scope    string
+	relative string
+	err      error
+}
+
+func (validation *pathValidation) requireAbsolutePaths() {
+	switch {
+	case !filepath.IsAbs(validation.repoRoot):
+		validation.err = fmt.Errorf("repository root must be an absolute path: %q", validation.repoRoot)
+	case !filepath.IsAbs(validation.scope):
+		validation.err = fmt.Errorf("scope must be an absolute path: %q", validation.scope)
+	}
+}
+
+func (validation *pathValidation) cleanAndRelativize() {
+	if validation.err != nil {
+		return
+	}
+	validation.repoRoot = filepath.Clean(validation.repoRoot)
+	validation.scope = filepath.Clean(validation.scope)
+	validation.relative, validation.err = filepath.Rel(validation.repoRoot, validation.scope)
+	if validation.err != nil {
+		validation.err = fmt.Errorf("resolve scope relative to repository root: %w", validation.err)
+		return
+	}
+	if pathOutside(validation.relative) {
+		validation.err = fmt.Errorf(
+			"scope %q is outside repository root %q",
+			validation.scope,
+			validation.repoRoot,
+		)
+	}
+}
+
+func pathOutside(relative string) bool {
+	return relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func (validation *pathValidation) inspectRepositoryRoot() {
+	if validation.err != nil {
+		return
+	}
+	info, err := os.Lstat(validation.repoRoot)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve scope relative to repository root: %w", err)
+		validation.err = fmt.Errorf("inspect repository root %q: %w", validation.repoRoot, err)
+		return
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", "", fmt.Errorf("scope %q is outside repository root %q", scope, repoRoot)
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		validation.err = fmt.Errorf("repository root must not be a symbolic link: %q", validation.repoRoot)
+	case !info.IsDir():
+		validation.err = fmt.Errorf("repository root is not a directory: %q", validation.repoRoot)
 	}
+}
 
-	rootInfo, err := os.Lstat(repoRoot)
-	if err != nil {
-		return "", "", fmt.Errorf("inspect repository root %q: %w", repoRoot, err)
+func (validation *pathValidation) inspectScopeComponents() {
+	if validation.err != nil || validation.relative == "." {
+		return
 	}
-	if rootInfo.Mode()&os.ModeSymlink != 0 {
-		return "", "", fmt.Errorf("repository root must not be a symbolic link: %q", repoRoot)
-	}
-	if !rootInfo.IsDir() {
-		return "", "", fmt.Errorf("repository root is not a directory: %q", repoRoot)
-	}
-
-	current := repoRoot
-	if rel != "." {
-		for _, part := range strings.Split(rel, string(filepath.Separator)) {
-			current = filepath.Join(current, part)
-			info, err := os.Lstat(current)
-			if err != nil {
-				return "", "", fmt.Errorf("inspect scope path %q: %w", current, err)
-			}
-			if info.Mode()&os.ModeSymlink != 0 {
-				return "", "", fmt.Errorf("scope path must not traverse a symbolic link: %q", current)
-			}
+	current := validation.repoRoot
+	for _, part := range strings.Split(validation.relative, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			validation.err = fmt.Errorf("inspect scope path %q: %w", current, err)
+			break
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			validation.err = fmt.Errorf("scope path must not traverse a symbolic link: %q", current)
+			break
 		}
 	}
+}
 
-	scopeInfo, err := os.Lstat(scope)
+func (validation *pathValidation) inspectScope() {
+	if validation.err != nil {
+		return
+	}
+	info, err := os.Lstat(validation.scope)
 	if err != nil {
-		return "", "", fmt.Errorf("inspect scope %q: %w", scope, err)
+		validation.err = fmt.Errorf("inspect scope %q: %w", validation.scope, err)
+		return
 	}
-	if !scopeInfo.IsDir() && (!scopeInfo.Mode().IsRegular() || filepath.Ext(scope) != ".go") {
-		return "", "", fmt.Errorf("scope is not a directory or supported source file (expected a .go file): %q", scope)
+	if !info.IsDir() && (!info.Mode().IsRegular() || filepath.Ext(validation.scope) != ".go") {
+		validation.err = fmt.Errorf(
+			"scope is not a directory or supported source file (expected a .go file): %q",
+			validation.scope,
+		)
 	}
-	return repoRoot, scope, nil
 }
 
 func scanFile(ctx context.Context, repoRoot, filename string) (Result, error) {
-	if err := ctx.Err(); err != nil {
-		return Result{}, err
-	}
-	rel, err := filepath.Rel(repoRoot, filename)
-	if err != nil {
-		return Result{}, fmt.Errorf("resolve source path %q relative to repository root: %w", filename, err)
-	}
-	rel = filepath.ToSlash(rel)
+	scan := &sourceScan{ctx: ctx, repoRoot: repoRoot, filename: filename}
+	scan.checkContext()
+	scan.resolveRelativePath()
+	scan.parseFile()
+	scan.collectClaims()
+	return scan.result, scan.err
+}
 
-	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
-	if contextErr := ctx.Err(); contextErr != nil {
-		return Result{}, contextErr
+type sourceScan struct {
+	ctx      context.Context
+	repoRoot string
+	filename string
+	relative string
+	files    *token.FileSet
+	parsed   *ast.File
+	result   Result
+	err      error
+	skip     bool
+}
+
+func (scan *sourceScan) checkContext() {
+	scan.err = scan.ctx.Err()
+}
+
+func (scan *sourceScan) resolveRelativePath() {
+	if scan.err != nil {
+		return
+	}
+	scan.relative, scan.err = filepath.Rel(scan.repoRoot, scan.filename)
+	if scan.err != nil {
+		scan.err = fmt.Errorf(
+			"resolve source path %q relative to repository root: %w",
+			scan.filename,
+			scan.err,
+		)
+		return
+	}
+	scan.relative = filepath.ToSlash(scan.relative)
+}
+
+func (scan *sourceScan) parseFile() {
+	if scan.err != nil {
+		return
+	}
+	scan.files = token.NewFileSet()
+	parsed, parseErr := parser.ParseFile(scan.files, scan.filename, nil, parser.ParseComments)
+	scan.parsed = parsed
+	if contextErr := scan.ctx.Err(); contextErr != nil {
+		scan.err = contextErr
+		return
 	}
 	if parsed != nil && ast.IsGenerated(parsed) {
-		return Result{}, nil
+		scan.skip = true
+		return
 	}
-	if err != nil {
-		return Result{Diagnostics: []Diagnostic{malformedFileDiagnostic(rel, err)}}, nil
+	if parseErr != nil {
+		scan.result.Diagnostics = []Diagnostic{malformedFileDiagnostic(scan.relative, parseErr)}
+		scan.skip = true
 	}
+}
 
-	subjects := indexSubjects(fset, parsed)
-	var result Result
-	for _, group := range parsed.Comments {
+func (scan *sourceScan) collectClaims() {
+	if scan.err != nil || scan.skip {
+		return
+	}
+	subjects := indexSubjects(scan.files, scan.parsed)
+	for _, group := range scan.parsed.Comments {
 		for _, claim := range parseCommentGroup(group) {
-			markerLine := sourceLine(fset, claim.comment.Slash)
-			if claim.text == "" {
-				result.Diagnostics = append(result.Diagnostics, Diagnostic{
-					File:    rel,
-					Line:    markerLine,
-					Message: fmt.Sprintf("%s claim is empty", claim.marker),
-				})
-				continue
-			}
-
-			subject := subjects.forComment(claim.comment)
-			result.Claims = append(result.Claims, Claim{
-				Marker:     claim.marker,
-				Text:       claim.text,
-				Package:    parsed.Name.Name,
-				Kind:       subject.kind,
-				Symbol:     subject.symbol,
-				File:       rel,
-				MarkerLine: markerLine,
-				StartLine:  sourceLine(fset, subject.start),
-				EndLine:    sourceLine(fset, subject.end),
-			})
+			scan.appendClaim(subjects, claim)
 		}
 	}
+}
 
-	return result, nil
+func (scan *sourceScan) appendClaim(subjects subjectIndex, claim parsedClaim) {
+	markerLine := sourceLine(scan.files, claim.comment.Slash)
+	if claim.text == "" {
+		scan.result.Diagnostics = append(scan.result.Diagnostics, Diagnostic{
+			File:    scan.relative,
+			Line:    markerLine,
+			Message: fmt.Sprintf("%s claim is empty", claim.marker),
+		})
+		return
+	}
+	subject := subjects.forComment(claim.comment)
+	scan.result.Claims = append(scan.result.Claims, Claim{
+		Marker:     claim.marker,
+		Text:       claim.text,
+		Package:    scan.parsed.Name.Name,
+		Kind:       subject.kind,
+		Symbol:     subject.symbol,
+		File:       scan.relative,
+		MarkerLine: markerLine,
+		StartLine:  sourceLine(scan.files, subject.start),
+		EndLine:    sourceLine(scan.files, subject.end),
+	})
 }
 
 func malformedFileDiagnostic(filename string, parseErr error) Diagnostic {
@@ -288,30 +424,37 @@ func parseCommentGroup(group *ast.CommentGroup) []parsedClaim {
 		if !ok {
 			continue
 		}
-
-		lines := make([]string, 0, 1)
-		if firstLine != "" {
-			lines = append(lines, firstLine)
-		}
-		for nextIndex := index + 1; nextIndex < len(group.List); nextIndex++ {
-			next := group.List[nextIndex]
-			if _, _, nextIsMarker := markerText(next.Text); nextIsMarker || resemblesMarker(next.Text) {
-				break
-			}
-			line, isLineComment := lineCommentText(next.Text)
-			if !isLineComment || line == "" {
-				break
-			}
-			lines = append(lines, line)
-		}
-
 		claims = append(claims, parsedClaim{
 			comment: comment,
 			marker:  marker,
-			text:    strings.Join(lines, "\n"),
+			text:    strings.Join(claimLines(group, index, firstLine), "\n"),
 		})
 	}
 	return claims
+}
+
+func claimLines(group *ast.CommentGroup, markerIndex int, firstLine string) []string {
+	lines := make([]string, 0, 1)
+	if firstLine != "" {
+		lines = append(lines, firstLine)
+	}
+	for nextIndex := markerIndex + 1; nextIndex < len(group.List); nextIndex++ {
+		next := group.List[nextIndex]
+		if startsClaim(next.Text) {
+			break
+		}
+		line, isLineComment := lineCommentText(next.Text)
+		if !isLineComment || line == "" {
+			break
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func startsClaim(comment string) bool {
+	_, _, marker := markerText(comment)
+	return marker || resemblesMarker(comment)
 }
 
 func resemblesMarker(raw string) bool {
@@ -420,44 +563,52 @@ func indexGeneralDeclaration(fset *token.FileSet, index *subjectIndex, declarati
 	for _, specification := range declaration.Specs {
 		switch specification := specification.(type) {
 		case *ast.TypeSpec:
-			if declaration.Tok != token.TYPE {
-				continue
-			}
-			typeSubject := subject{
-				kind:   "type",
-				symbol: specification.Name.Name,
-				start:  specification.Pos(),
-				end:    specification.End(),
-			}
-			index.register(specification.Doc, typeSubject)
-			index.register(specification.Comment, typeSubject)
-			if specification.Doc == nil && !declaration.Lparen.IsValid() && len(declaration.Specs) == 1 {
-				index.register(declaration.Doc, typeSubject)
-			}
-			index.containers = append(index.containers, subjectContainer{
-				start:   specification.Type.Pos(),
-				end:     specification.Type.End(),
-				subject: typeSubject,
-			})
-			if structure, ok := specification.Type.(*ast.StructType); ok {
-				indexStructFields(fset, index, specification.Name.Name, structure)
-			}
+			indexTypeSpecification(fset, index, declaration, specification)
 		case *ast.ValueSpec:
-			if declaration.Tok != token.CONST && declaration.Tok != token.VAR {
-				continue
-			}
-			valueSubject := subject{
-				kind:   strings.ToLower(declaration.Tok.String()),
-				symbol: namesSymbol(specification.Names),
-				start:  specification.Pos(),
-				end:    specification.End(),
-			}
-			index.register(specification.Doc, valueSubject)
-			index.register(specification.Comment, valueSubject)
-			if specification.Doc == nil && !declaration.Lparen.IsValid() && len(declaration.Specs) == 1 {
-				index.register(declaration.Doc, valueSubject)
-			}
+			indexValueSpecification(index, declaration, specification)
 		}
+	}
+}
+
+func indexTypeSpecification(fset *token.FileSet, index *subjectIndex, declaration *ast.GenDecl, specification *ast.TypeSpec) {
+	if declaration.Tok != token.TYPE {
+		return
+	}
+	typeSubject := subject{
+		kind:   "type",
+		symbol: specification.Name.Name,
+		start:  specification.Pos(),
+		end:    specification.End(),
+	}
+	index.register(specification.Doc, typeSubject)
+	index.register(specification.Comment, typeSubject)
+	if specification.Doc == nil && !declaration.Lparen.IsValid() && len(declaration.Specs) == 1 {
+		index.register(declaration.Doc, typeSubject)
+	}
+	index.containers = append(index.containers, subjectContainer{
+		start:   specification.Type.Pos(),
+		end:     specification.Type.End(),
+		subject: typeSubject,
+	})
+	if structure, ok := specification.Type.(*ast.StructType); ok {
+		indexStructFields(fset, index, specification.Name.Name, structure)
+	}
+}
+
+func indexValueSpecification(index *subjectIndex, declaration *ast.GenDecl, specification *ast.ValueSpec) {
+	if declaration.Tok != token.CONST && declaration.Tok != token.VAR {
+		return
+	}
+	valueSubject := subject{
+		kind:   strings.ToLower(declaration.Tok.String()),
+		symbol: namesSymbol(specification.Names),
+		start:  specification.Pos(),
+		end:    specification.End(),
+	}
+	index.register(specification.Doc, valueSubject)
+	index.register(specification.Comment, valueSubject)
+	if specification.Doc == nil && !declaration.Lparen.IsValid() && len(declaration.Specs) == 1 {
+		index.register(declaration.Doc, valueSubject)
 	}
 }
 

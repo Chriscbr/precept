@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/Chriscbr/precept/internal/discover"
 	"github.com/Chriscbr/precept/internal/harness"
 	"github.com/Chriscbr/precept/internal/prompt"
 	"github.com/Chriscbr/precept/internal/report"
 	"github.com/Chriscbr/precept/internal/textsafe"
 	"github.com/Chriscbr/precept/internal/verify"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -57,6 +57,23 @@ func newVerifyCommand(version string, state *executionState) *cobra.Command {
 	return command
 }
 
+type verifyInvocation struct {
+	command       *cobra.Command
+	version       string
+	scopeArgument string
+	options       verifyFlags
+	startedAt     time.Time
+	log           *verificationLog
+	runner        harness.Runner
+	sections      []string
+	scope         resolvedScope
+	discovery     discover.Result
+	info          harness.Info
+	outcomes      []verify.Outcome
+	report        report.Run
+	err           error
+}
+
 func runVerify(command *cobra.Command, version, scopeArgument string, options verifyFlags, state *executionState) (returnErr error) {
 	if state != nil {
 		state.verificationLogPath = ""
@@ -64,126 +81,239 @@ func runVerify(command *cobra.Command, version, scopeArgument string, options ve
 	if err := validateVerifyFlags(options); err != nil {
 		return operationalError(err)
 	}
-	startedAt := time.Now().UTC()
-	if err := writeFormatted(command.ErrOrStderr(), "Scanning for claims in %s...\n", textsafe.SingleLine(scopeArgument)); err != nil {
-		return operationalError(err)
+	invocation := &verifyInvocation{
+		command:       command,
+		version:       version,
+		scopeArgument: scopeArgument,
+		options:       options,
+		startedAt:     time.Now().UTC(),
 	}
-	runLog, err := newVerificationLog(startedAt)
-	if err != nil {
+	if err := invocation.openLog(); err != nil {
 		return operationalError(err)
 	}
 	if state != nil {
-		state.verificationLogPath = runLog.Path()
+		state.verificationLogPath = invocation.log.Path()
 	}
 	defer func() {
-		if err := runLog.WriteCommandExit(returnErr); err != nil {
+		if err := invocation.log.WriteCommandExit(returnErr); err != nil {
 			returnErr = promoteLogFailure(returnErr, err)
 		}
-		if err := runLog.Close(); err != nil {
+		if err := invocation.log.Close(); err != nil {
 			returnErr = promoteLogFailure(returnErr, err)
 		}
 	}()
-	if err := runLog.WriteRunStart(version, scopeArgument, options, startedAt); err != nil {
-		return operationalError(err)
-	}
+	invocation.execute()
+	return invocation.err
+}
 
-	runner, err := harness.New(options.agent)
-	if err != nil {
-		return operationalError(err)
+func (invocation *verifyInvocation) openLog() error {
+	err := writeFormatted(
+		invocation.command.ErrOrStderr(),
+		"Scanning for claims in %s...\n",
+		textsafe.SingleLine(invocation.scopeArgument),
+	)
+	if err == nil {
+		invocation.log, err = newVerificationLog(invocation.startedAt)
 	}
-	sections, err := loadAppendedSections(options.appendPrompt, options.appendPromptFiles)
-	if err != nil {
-		return operationalError(err)
-	}
-	scope, err := resolveScope(command.Context(), scopeArgument)
-	if err != nil {
-		return operationalError(err)
-	}
-	discovery, err := discover.ScanContext(command.Context(), scope.repositoryRoot, scope.absolutePath)
-	if err != nil {
-		return operationalError(fmt.Errorf("discover claims: %w", err))
-	}
-	if err := runLog.WriteDiscovery(scope, discovery); err != nil {
-		return operationalError(err)
-	}
+	return err
+}
 
-	info := harness.Info{Name: runner.Name()}
-	if len(discovery.Claims) > 0 {
-		info, err = runner.Preflight(command.Context())
-		if err != nil {
-			return operationalError(err)
-		}
-	}
-	if err := runLog.WriteHarness(info); err != nil {
-		return operationalError(err)
-	}
-	if len(discovery.Claims) == 0 {
-		err = writeFormatted(command.ErrOrStderr(), "Discovered 0 claim(s) in %s; nothing to validate\n", textsafe.SingleLine(scope.relativePath))
-	} else {
-		err = writeFormatted(
-			command.ErrOrStderr(),
-			"Discovered %d claim(s) in %s. Validating with %s using up to %d parallel worker(s)\n",
-			len(discovery.Claims),
-			textsafe.SingleLine(scope.relativePath),
-			textsafe.SingleLine(runner.Name()),
-			options.jobs,
-		)
-	}
-	if err != nil {
-		return operationalError(err)
-	}
+func (invocation *verifyInvocation) execute() {
+	invocation.writeRunStart()
+	invocation.selectRunner()
+	invocation.loadContext()
+	invocation.resolveScope()
+	invocation.discoverClaims()
+	invocation.writeDiscovery()
+	invocation.preflight()
+	invocation.writeHarness()
+	invocation.writeDiscoveryStatus()
+	invocation.validateClaims()
+	invocation.buildReport()
+	invocation.writeReport()
+	invocation.setExitStatus()
+}
 
+func (invocation *verifyInvocation) writeRunStart() {
+	if invocation.err == nil {
+		invocation.fail(invocation.log.WriteRunStart(
+			invocation.version,
+			invocation.scopeArgument,
+			invocation.options,
+			invocation.startedAt,
+		))
+	}
+}
+
+func (invocation *verifyInvocation) selectRunner() {
+	if invocation.err != nil {
+		return
+	}
+	invocation.runner, invocation.err = harness.New(invocation.options.agent)
+	invocation.wrapFailure()
+}
+
+func (invocation *verifyInvocation) loadContext() {
+	if invocation.err != nil {
+		return
+	}
+	invocation.sections, invocation.err = loadAppendedSections(
+		invocation.options.appendPrompt,
+		invocation.options.appendPromptFiles,
+	)
+	invocation.wrapFailure()
+}
+
+func (invocation *verifyInvocation) resolveScope() {
+	if invocation.err != nil {
+		return
+	}
+	invocation.scope, invocation.err = resolveScope(invocation.command.Context(), invocation.scopeArgument)
+	invocation.wrapFailure()
+}
+
+func (invocation *verifyInvocation) discoverClaims() {
+	if invocation.err != nil {
+		return
+	}
+	invocation.discovery, invocation.err = discover.ScanContext(
+		invocation.command.Context(),
+		invocation.scope.repositoryRoot,
+		invocation.scope.absolutePath,
+	)
+	if invocation.err != nil {
+		invocation.err = operationalError(fmt.Errorf("discover claims: %w", invocation.err))
+	}
+}
+
+func (invocation *verifyInvocation) writeDiscovery() {
+	if invocation.err == nil {
+		invocation.fail(invocation.log.WriteDiscovery(invocation.scope, invocation.discovery))
+	}
+}
+
+func (invocation *verifyInvocation) preflight() {
+	if invocation.err != nil {
+		return
+	}
+	invocation.info = harness.Info{Name: invocation.runner.Name()}
+	if len(invocation.discovery.Claims) > 0 {
+		invocation.info, invocation.err = invocation.runner.Preflight(invocation.command.Context())
+		invocation.wrapFailure()
+	}
+}
+
+func (invocation *verifyInvocation) writeHarness() {
+	if invocation.err == nil {
+		invocation.fail(invocation.log.WriteHarness(invocation.info))
+	}
+}
+
+func (invocation *verifyInvocation) writeDiscoveryStatus() {
+	if invocation.err != nil {
+		return
+	}
+	if len(invocation.discovery.Claims) == 0 {
+		invocation.fail(writeFormatted(
+			invocation.command.ErrOrStderr(),
+			"Discovered 0 claim(s) in %s; nothing to validate\n",
+			textsafe.SingleLine(invocation.scope.relativePath),
+		))
+		return
+	}
+	invocation.fail(writeFormatted(
+		invocation.command.ErrOrStderr(),
+		"Discovered %d claim(s) in %s. Validating with %s using up to %d parallel worker(s)\n",
+		len(invocation.discovery.Claims),
+		textsafe.SingleLine(invocation.scope.relativePath),
+		textsafe.SingleLine(invocation.runner.Name()),
+		invocation.options.jobs,
+	))
+}
+
+func (invocation *verifyInvocation) validateClaims() {
+	if invocation.err != nil {
+		return
+	}
 	validator := &agentValidator{
-		runner:           runner,
-		repositoryRoot:   scope.repositoryRoot,
-		scope:            scope.relativePath,
-		model:            options.model,
-		effort:           options.effort,
-		appendedSections: sections,
-		log:              runLog,
+		runner:           invocation.runner,
+		repositoryRoot:   invocation.scope.repositoryRoot,
+		scope:            invocation.scope.relativePath,
+		model:            invocation.options.model,
+		effort:           invocation.options.effort,
+		appendedSections: invocation.sections,
+		log:              invocation.log,
 	}
-	outcomes, err := verify.Run(command.Context(), discovery.Claims, validator, verify.Options{
-		Jobs:     options.jobs,
-		Timeout:  options.timeout,
-		Progress: command.ErrOrStderr(),
-	})
-	if err != nil {
-		return operationalError(err)
-	}
-
-	run := report.Run{
-		PreceptVersion: version,
-		Scope:          scope.relativePath,
-		Agent: report.Agent{
-			Name:    info.Name,
-			Version: info.Version,
-			Model:   options.model,
-			Effort:  options.effort,
+	invocation.outcomes, invocation.err = verify.Run(
+		invocation.command.Context(),
+		invocation.discovery.Claims,
+		validator,
+		verify.Options{
+			Jobs:     invocation.options.jobs,
+			Timeout:  invocation.options.timeout,
+			Progress: invocation.command.ErrOrStderr(),
 		},
-		StartedAt:       startedAt,
-		FinishedAt:      time.Now().UTC(),
-		AppendedContext: len(sections) > 0,
-		Diagnostics:     discovery.Diagnostics,
-		Outcomes:        outcomes,
-	}
-	outputFormat := report.FormatText
-	if options.jsonOutput {
-		outputFormat = report.FormatJSON
-	}
-	if err := runLog.WriteReport(run); err != nil {
-		return operationalError(err)
-	}
-	if err := report.Write(command.OutOrStdout(), outputFormat, run); err != nil {
-		return operationalError(err)
-	}
+	)
+	invocation.wrapFailure()
+}
 
-	switch report.ExitCode(outcomes) {
-	case 0:
-		return nil
+func (invocation *verifyInvocation) buildReport() {
+	if invocation.err != nil {
+		return
+	}
+	invocation.report = report.Run{
+		PreceptVersion: invocation.version,
+		Scope:          invocation.scope.relativePath,
+		Agent: report.Agent{
+			Name:    invocation.info.Name,
+			Version: invocation.info.Version,
+			Model:   invocation.options.model,
+			Effort:  invocation.options.effort,
+		},
+		StartedAt:       invocation.startedAt,
+		FinishedAt:      time.Now().UTC(),
+		AppendedContext: len(invocation.sections) > 0,
+		Diagnostics:     invocation.discovery.Diagnostics,
+		Outcomes:        invocation.outcomes,
+	}
+}
+
+func (invocation *verifyInvocation) writeReport() {
+	if invocation.err != nil {
+		return
+	}
+	invocation.fail(invocation.log.WriteReport(invocation.report))
+	if invocation.err != nil {
+		return
+	}
+	format := report.FormatText
+	if invocation.options.jsonOutput {
+		format = report.FormatJSON
+	}
+	invocation.fail(report.Write(invocation.command.OutOrStdout(), format, invocation.report))
+}
+
+func (invocation *verifyInvocation) setExitStatus() {
+	if invocation.err != nil {
+		return
+	}
+	switch report.ExitCode(invocation.outcomes) {
 	case 1:
-		return semanticFailure()
-	default:
-		return operationalFailure()
+		invocation.err = semanticFailure()
+	case 2:
+		invocation.err = operationalFailure()
+	}
+}
+
+func (invocation *verifyInvocation) fail(err error) {
+	if err != nil && invocation.err == nil {
+		invocation.err = operationalError(err)
+	}
+}
+
+func (invocation *verifyInvocation) wrapFailure() {
+	if invocation.err != nil {
+		invocation.err = operationalError(invocation.err)
 	}
 }
 
