@@ -1,4 +1,4 @@
-// Package report renders deterministic verification results for humans and tools.
+// Package report renders deterministic discovery and verification results for humans and tools.
 package report
 
 import (
@@ -391,6 +391,7 @@ const (
 	ansiRed    = "31"
 	ansiGreen  = "32"
 	ansiYellow = "33"
+	ansiCyan   = "36"
 	ansiGray   = "90"
 )
 

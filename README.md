@@ -77,7 +77,32 @@ precept list ./example
 precept list ./example/internal/state_machine.go
 ```
 
-The file-or-directory argument is optional and defaults to the current working directory. Precept assumes code is in a Git repository and resolves paths relative to the git project root.
+The command defaults to the current working directory.
+It assumes code is in a Git repository and resolves paths relative to the git project root.
+
+The terminal output highlights each claim, with it's description and source location:
+
+```text
+example.Clamp [PRECONDITION] (example/clamp.go:3)
+  lo <= hi
+
+example.Clamp [POSTCONDITION] (example/clamp.go:4)
+  the result is within the inclusive range [lo, hi]
+
+2 claims in 1 file
+```
+
+Use `precept list --compact` for an index without claim descriptions:
+
+```text
+KIND           SYMBOL         SOURCE
+PRECONDITION   example.Clamp  example/clamp.go:3
+POSTCONDITION  example.Clamp  example/clamp.go:4
+
+2 claims in 1 file
+```
+
+Use `precept list --json` for machine-readable output.
 
 ## Verify claims
 
@@ -172,6 +197,6 @@ Here are some ideas for future features:
 - [ ] Add a `--claim` flag to the `verify` command to only verify a specific claim (may be repeated to verify multiple individual claims).
 - [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
 - [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
-- [ ] Improve the readability of the `list` command's output.
+- [x] Improve the readability of the `list` command's output.
 - [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.
 - [ ] Support programming languages other than Go.

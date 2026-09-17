@@ -124,7 +124,7 @@ func TestVerificationLogPathIsLastAfterOperationalError(t *testing.T) {
 	assertFinalLogLine(t, stderr.String(), state.verificationLogPath)
 }
 
-func TestListTextOmitsDeclarationKind(t *testing.T) {
+func TestListOutput(t *testing.T) {
 	t.Parallel()
 
 	repository := t.TempDir()
@@ -144,17 +144,48 @@ func Example() int { return 1 }
 func Other() {}
 `, 0o644)
 
-	stdout, stderr, err := executeCommand(t, []string{"list", fixturePath})
-	if err != nil {
-		t.Fatalf("precept list: %v", err)
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "text",
+			args: []string{"list", fixturePath},
+			want: "fixture.Example [INVARIANT] (fixture.go:3)\n  always returns one\n\n1 claim in 1 file\n",
+		},
+		{
+			name: "compact",
+			args: []string{"list", "--compact", fixturePath},
+			want: "KIND       SYMBOL           SOURCE\nINVARIANT  fixture.Example  fixture.go:3\n\n1 claim in 1 file\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdout, stderr, err := executeCommand(t, test.args)
+			if err != nil {
+				t.Fatalf("precept list: %v", err)
+			}
+			if stdout != test.want {
+				t.Fatalf("list output =\n%s\nwant:\n%s", stdout, test.want)
+			}
+			if !strings.Contains(stderr, "Scanning for claims in "+fixturePath+"...") {
+				t.Fatalf("list stderr does not immediately identify its scan scope:\n%s", stderr)
+			}
+		})
 	}
-	const want = "fixture.go:3  INVARIANT  Example\n  always returns one\n\n1 claim(s) in fixture.go\n"
-	if stdout != want {
-		t.Fatalf("list text output =\n%s\nwant:\n%s", stdout, want)
-	}
-	if !strings.Contains(stderr, "Scanning for claims in "+fixturePath+"...") {
-		t.Fatalf("list stderr does not immediately identify its scan scope:\n%s", stderr)
-	}
+	t.Run("json ignores compact", func(t *testing.T) {
+		stdout, stderr, err := executeCommand(t, []string{"list", "--json", fixturePath})
+		if err != nil {
+			t.Fatalf("precept list --json: %v", err)
+		}
+		compactStdout, compactStderr, err := executeCommand(t, []string{"list", "--json", "--compact", fixturePath})
+		if err != nil {
+			t.Fatalf("precept list --json --compact: %v", err)
+		}
+		if !json.Valid([]byte(compactStdout)) || compactStdout != stdout || compactStderr != stderr {
+			t.Fatalf("--compact changed JSON output:\nstdout:\n%s\nstderr:\n%s", compactStdout, compactStderr)
+		}
+	})
 }
 
 func TestListStopsPromptlyWhenCanceledAfterScanningStarts(t *testing.T) {

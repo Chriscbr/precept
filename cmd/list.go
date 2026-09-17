@@ -3,11 +3,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/Chriscbr/precept/internal/discover"
+	"github.com/Chriscbr/precept/internal/report"
 	"github.com/Chriscbr/precept/internal/textsafe"
+	"github.com/spf13/cobra"
 )
 
 type listDocument struct {
@@ -19,6 +19,7 @@ type listDocument struct {
 
 func newListCommand() *cobra.Command {
 	var jsonOutput bool
+	var compact bool
 	command := &cobra.Command{
 		Use:   "list [file-or-directory]",
 		Short: "List source-condition claims without launching an agent",
@@ -57,29 +58,13 @@ func newListCommand() *cobra.Command {
 					return operationalError(err)
 				}
 			}
-			for _, claim := range result.Claims {
-				if err := writeFormatted(
-					cmd.OutOrStdout(),
-					"%s:%d  %s  %s\n",
-					textsafe.SingleLine(claim.File),
-					claim.MarkerLine,
-					textsafe.SingleLine(string(claim.Marker)),
-					textsafe.SingleLine(claim.Symbol),
-				); err != nil {
-					return operationalError(err)
-				}
-				for _, line := range strings.Split(claim.Text, "\n") {
-					if err := writeFormatted(cmd.OutOrStdout(), "  %s\n", textsafe.SingleLine(line)); err != nil {
-						return operationalError(err)
-					}
-				}
-			}
-			if err := writeFormatted(cmd.OutOrStdout(), "\n%d claim(s) in %s\n", len(result.Claims), textsafe.SingleLine(scope.relativePath)); err != nil {
+			if err := report.WriteListText(cmd.OutOrStdout(), result.Claims, compact); err != nil {
 				return operationalError(err)
 			}
 			return nil
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON instead of text")
+	command.Flags().BoolVar(&compact, "compact", false, "show a compact index without claim text (ignored with --json)")
 	return command
 }
