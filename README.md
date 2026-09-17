@@ -167,10 +167,9 @@ Here are some ideas for future features:
 - [ ] Build tooling for automatically running Precept in a CI pipeline / as a GitHub PR review bot.
 - [ ] Add a `prompt` or `inspect` command to view the prompt that will be sent to the agent.
 - [ ] Add a `compare` command to compare the JSON output of two verification runs for the purpose of identifying new violations, moved claims, agent verdict changes, etc.
-- [ ] Support adding optional IDs to claims to allow for tracking them across verification runs (e.g. "// INVARIANT [buffer-single-owner]: ...")
 - [ ] Add a `resolve` command (and optional `--resolve` flag on `verify`) to automatically resolve claims that don't hold by suggesting fixes or resolutions based on the context of the codebase. The proposed resolutions could be categorized into `change-code`, `change-claim`, `clarify-claim`, `split-claim`, `move-claim`, `remove-claim`, `add-enforcement`, `add-context`, `defer-to-author`, `not-verifiable`, etc.
+- [ ] Support user-defined claim IDs (e.g. "// INVARIANT buffer-single-owner: ...") to give claims stable names for use in the `--claim` flag and in CLI outputs. Unnamed claims should be given a stable default name (e.g. "newbuffer-precondition-1", "buffer-close-postcondition-2", etc.) based on the position of the claim in the file and the claim type.
 - [ ] Add a `--claim` flag to the `verify` command to only verify a specific claim (may be repeated to verify multiple individual claims).
-- [ ] Support claim IDs (e.g. "// INVARIANT buffer-single-owner: ...") to give claims stable names for use in the `--claim` flag and in CLI outputs. Unnamed claims should be given a stable default name (e.g. "newbuffer-precondition-1", "buffer-close-postcondition-2", etc.) based on the position of the claim in the file and the claim type.
 - [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
 - [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
 - [ ] Improve the readability of the `list` command's output.
