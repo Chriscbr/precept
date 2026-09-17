@@ -1,6 +1,6 @@
 # Precept
 
-Precept is a stateless CLI that asks an agent to check behavioral claims included in Go code comments. It discovers preconditions, postconditions, assertions, and invariants in a selected scope, associates each claim with a Go declaration or function, and verifies every claim in a fresh read-only Claude Code or Codex session.
+Precept is a stateless CLI for asking agents check invariants and other natural language claims in your source code. It discovers preconditions, postconditions, and assertions in a selected scope, associates each claim with a type declaration or function, and verifies every claim in an independent Claude Code or Codex session. Today the only supported language is Go, but support for other languages is planned.
 
 ## Install
 
@@ -10,12 +10,10 @@ Build and install from source:
 go install github.com/Chriscbr/precept@latest
 ```
 
-Precept launches an existing, current agent CLI, so install and authenticate at least one supported harness before running it:
+Precept relies on an agent CLI being installed on your system, so set up at least one of the following supported harnesses before running it:
 
-```bash
-claude --version
-codex --version
-```
+- [claude](https://code.claude.com/docs/en/quickstart)
+- [codex](https://learn.chatgpt.com/docs/codex/cli)
 
 ## Write a claim
 
