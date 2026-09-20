@@ -156,7 +156,7 @@ func TestWriteTextTerminalStyle(t *testing.T) {
 		"\x1b[90mReason  \x1b[m",
 		"\x1b[1mEvidence\x1b[m",
 		"\x1b[1mCounterexample\x1b[m",
-		"\x1b[90mResume  codex resume codex-holds-123\x1b[m",
+		"\x1b[90mResume  codex resume codex-holds-123 (View in ChatGPT)\x1b[m",
 		"\x1b[90mexample/clamp.go:12-14\x1b[m",
 	} {
 		if !strings.Contains(styled.String(), fragment) {
@@ -171,6 +171,22 @@ func TestWriteTextTerminalStyle(t *testing.T) {
 	if got := stripReportANSI(styled.String()); got != plain.String() {
 		t.Fatalf("styled structure differs after removing ANSI\ngot:\n%s\nwant:\n%s", got, plain.String())
 	}
+	for _, color := range []bool{true, false} {
+		var linked bytes.Buffer
+		if err := writeText(&linked, fixtureRun(), textStyle{enabled: color, hyperlinks: true}); err != nil {
+			t.Fatalf("write linked text: %v", err)
+		}
+		for _, sessionID := range []string{"codex-holds-123", "codex-violated-456", "codex-error-789"} {
+			want := "codex resume " + sessionID + " (\x1b]8;;codex://threads/" + sessionID +
+				"\a\x1b[4mView in ChatGPT\x1b[24m\x1b]8;;\a)"
+			if !strings.Contains(linked.String(), want) {
+				t.Errorf("linked output does not contain %q (color=%t):\n%s", want, color, linked.String())
+			}
+		}
+		if got := stripReportANSI(linked.String()); got != plain.String() {
+			t.Fatalf("linked structure differs after removing ANSI\ngot:\n%s\nwant:\n%s", got, plain.String())
+		}
+	}
 }
 
 func TestWriteTextEscapesTerminalControls(t *testing.T) {
@@ -180,15 +196,16 @@ func TestWriteTextEscapesTerminalControls(t *testing.T) {
 	run.Outcomes = run.Outcomes[:1]
 	run.Outcomes[0].Result.Summary = "safe\x1b]52;clipboard\a\ncontinued"
 	run.Outcomes[0].Result.Evidence[0].Reason = "evidence\rspoof"
+	run.Outcomes[0].SessionID = "thread/\x1b]52;clipboard\a?#"
 
 	var output bytes.Buffer
-	if err := writeText(&output, run, textStyle{enabled: true}); err != nil {
+	if err := writeText(&output, run, textStyle{enabled: true, hyperlinks: true}); err != nil {
 		t.Fatalf("write styled text: %v", err)
 	}
-	if strings.Contains(output.String(), "\x1b]52") || strings.Contains(output.String(), "\a") {
+	if strings.Contains(output.String(), "\x1b]52") || strings.Contains(output.String(), "clipboard\a") {
 		t.Fatalf("styled output contains an untrusted terminal control:\n%s", output.String())
 	}
-	for _, want := range []string{`safe\u{1b}]52;clipboard\u{7}`, "continued", `evidence\rspoof`} {
+	for _, want := range []string{`safe\u{1b}]52;clipboard\u{7}`, "continued", `evidence\rspoof`, "codex://threads/thread%2F%1B%5D52%3Bclipboard%07%3F%23"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("styled output does not contain %q:\n%s", want, output.String())
 		}

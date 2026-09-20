@@ -35,6 +35,17 @@ func FileLink(writer io.Writer, path string) string {
 	return newTextStyle(writer, "").linkPath(path, textsafe.SingleLine(path))
 }
 
+// App installation is not checked because the CLI may be running on a remote host.
+func (style textStyle) codexSessionLink(sessionID string) string {
+	const label = "View in ChatGPT"
+	if !style.hyperlinks {
+		return label
+	}
+	target := "codex://threads/" + url.PathEscape(strings.TrimSpace(sessionID))
+	return ansi.SetHyperlink(target) + ansi.NewStyle().Underline(true).String() + label +
+		ansi.NewStyle().Underline(false).String() + ansi.ResetHyperlink()
+}
+
 func (style textStyle) linkPath(path, label string) string {
 	if !style.hyperlinks || path == "" {
 		return label

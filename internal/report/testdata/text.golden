@@ -9,7 +9,7 @@ example.Clamp [PRECONDITION]  ✓ HOLDS (<1s)
     example/clamp.go:12-14
     min and max apply both bounds
 
-  Resume  codex resume codex-holds-123
+  Resume  codex resume codex-holds-123 (View in ChatGPT)
 
 (*Cache).Get [INVARIANT]  ✗ VIOLATED (<1s)
   Source  example/cache.go:42
@@ -23,7 +23,7 @@ example.Clamp [PRECONDITION]  ✓ HOLDS (<1s)
     example/cache.go:46
     the method always returns true
 
-  Resume  codex resume codex-violated-456
+  Resume  codex resume codex-violated-456 (View in ChatGPT)
 
 example.Config [POSTCONDITION]  ? INCONCLUSIVE (<1s)
   Source  example/config.go:19
@@ -39,6 +39,6 @@ example.Parse [INVARIANT]  ! ERROR (<1s)
   Claim   parsing never panics
   Reason  validation timed out after 10m0s
 
-  Resume  codex resume codex-error-789
+  Resume  codex resume codex-error-789 (View in ChatGPT)
 
 4 claims: 1 holds, 1 violated, 1 inconclusive, 1 error

@@ -157,7 +157,7 @@ example.Clamp [PRECONDITION]  ✓ HOLDS (1s)
     example/cache.go:46
     The method always returns true.
 
-  Resume  codex resume <cache-session>
+  Resume  codex resume <cache-session> (View in ChatGPT)
 
 2 claims: 1 holds, 1 violated, 0 inconclusive, 0 errors
 Finished in 3s. Exit code: 1.
@@ -165,6 +165,8 @@ Log file: /tmp/precept-verify-20260920T123456Z-3872649102.log
 ```
 
 When `precept verify` is run in an interactive shell, the output is condensed to only show detailed output for failed claims. Full details about each are still available in the generated log file.
+
+If you are using Codex as your agent harness, resume commands referenced in the output include a link to view the session in the ChatGPT desktop app if you have it installed.
 
 Use `precept verify --json` to generate a structured JSON document to stdout when verification completes. Its outcomes remain in source discovery order even when checks finish out of order. Progress stays on stderr.
 
@@ -212,7 +214,7 @@ Here are some ideas for future features:
 - [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
 - [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
 - [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.
-- [ ] Generate an HTML report of the verification results for easier review and sharing.
+- [ ] Generate an HTML report of the verification results for easier review and sharing. Configurable in the `precept.toml` file and possibly with `--report-*` flags.
 - [ ] Support Rust as an additional programming language.
 - [ ] Support Python as an additional programming language.
 - [ ] Support TypeScript as an additional programming language.

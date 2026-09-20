@@ -235,7 +235,11 @@ func writeTextOutcome(writer io.Writer, agentName string, outcome verify.Outcome
 		}
 	}
 	if command := ResumeCommand(agentName, outcome.SessionID); command != "" {
-		_, err := fmt.Fprintln(writer, "\n  "+style.gray("Resume  "+textsafe.SingleLine(command)))
+		value := textsafe.SingleLine(command)
+		if strings.EqualFold(strings.TrimSpace(agentName), "codex") {
+			value += " (" + style.codexSessionLink(outcome.SessionID) + ")"
+		}
+		_, err := fmt.Fprintln(writer, "\n  "+style.gray("Resume  "+value))
 		return err
 	}
 	return nil
