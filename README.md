@@ -161,7 +161,7 @@ example.Clamp [PRECONDITION]  ✓ HOLDS (1s)
 
 2 claims: 1 holds, 1 violated, 0 inconclusive, 0 errors
 Finished in 3s. Exit code: 1.
-Log file: /tmp/precept-verification-example-20260920T123456Z-00000.log
+Log file: /tmp/precept-verify-20260920T123456Z-3872649102.log
 ```
 
 When `precept verify` is run in an interactive shell, the output is condensed to only show detailed output for failed claims. Full details about each are still available in the generated log file.

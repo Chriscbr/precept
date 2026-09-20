@@ -24,7 +24,7 @@ type verificationLog struct {
 }
 
 func newVerificationLog(startedAt time.Time) (*verificationLog, error) {
-	stamp := startedAt.UTC().Format("20060102T150405.000000000Z")
+	stamp := startedAt.UTC().Format("20060102T150405Z")
 	file, err := os.CreateTemp("/tmp", "precept-verify-"+stamp+"-*.log")
 	if err != nil {
 		return nil, fmt.Errorf("create verification log: %w", err)

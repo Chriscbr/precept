@@ -127,7 +127,7 @@ func TestVerificationLogIsPrivateAndTimestamped(t *testing.T) {
 		_ = os.Remove(path)
 	})
 
-	if !strings.HasPrefix(filepath.Base(path), "precept-verify-20260721T150405.123456789Z-") {
+	if !strings.HasPrefix(filepath.Base(path), "precept-verify-20260721T150405Z-") {
 		t.Fatalf("verification log name = %q", filepath.Base(path))
 	}
 	if directory := filepath.Dir(path); directory != "/tmp" {
