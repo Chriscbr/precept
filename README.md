@@ -78,14 +78,16 @@ precept list ./example/internal/state_machine.go
 The command defaults to the current working directory.
 It assumes code is in a Git repository and resolves paths relative to the git project root.
 
-The terminal output highlights each claim, with it's description and source location:
+The output uses the same claim header as `verify`, followed by its source location and full claim text:
 
 ```text
-example.Clamp [PRECONDITION] (example/clamp.go:3)
-  lo <= hi
+example.Clamp [PRECONDITION]
+  example/clamp.go:3
+  Claim   lo <= hi
 
-example.Clamp [POSTCONDITION] (example/clamp.go:4)
-  the result is within the inclusive range [lo, hi]
+example.Clamp [POSTCONDITION]
+  example/clamp.go:4
+  Claim   the result is within the inclusive range [lo, hi]
 
 2 claims in 1 file
 ```
@@ -128,29 +130,58 @@ precept verify \
   ./example
 ```
 
-When the verification run is complete, Precept prints the results:
+Precept prints the invocation settings once, then each claim's result as soon as its agent finishes. Results appear in completion order, so a slow claim does not hold up other results. For example:
 
 ```text
-✓ queue.Buffer [INVARIANT] (internal/queue/buffer.go:33)
-  [outcome]: Holds
-  [reason]: In the queue processor, PendingItems is read or mutated only before the processing goroutine starts, by that one goroutine, or after Stop waits for it to exit. Background delivery workers operate on a detached item slice, not PendingItems.
-  [supporting evidence]:
-    • Start reads the field before it launches b.process in a new goroutine. (internal/queue/buffer.go:62-68)
-    • The processing loop performs normal inserts, length checks, delivery initiation, and retry merges serially in its one goroutine. (internal/queue/buffer.go:78-115)
-    • Stop waits for b.process to finish before it calls StartDelivery, so its final delivery cannot overlap accesses by process. (internal/queue/buffer.go:119-124)
-    • StartDelivery copies values from PendingItems and replaces the map before launching its asynchronous worker; the worker receives only the local item slice. (internal/queue/buffer.go:138-145)
-    • State changes synchronously stop the previous state before initializing the next one, preventing overlapping Buffer Start/Stop lifecycle calls. (internal/queue/state_machine.go:261-270)
-  [agent session]: codex resume <session-id>
+Verifying 2 claims in example
 
-✗ queue.BuildBatches [INVARIANT] (internal/queue/batcher.go:444)
-  [outcome]: Violated
-  [reason]: A single item larger than the request-size limit is still added to a batch, so BuildBatches can return a batch whose total size exceeds maxRequestSizeBytes. It also permits one item when maxItemsPerBatch is zero.
-  [supporting evidence]:
-    • When the next item would exceed either limit, the function appends the current batch and creates a new empty one, but then unconditionally appends that same item to the new batch. It does not reject or otherwise handle an item that alone exceeds maxRequestSizeBytes, nor does it re-check the limits after resetting. (internal/queue/batcher.go:457-479)
-    • Any nonempty final batch is returned, including a newly created batch containing an oversized item or an item added despite maxItemsPerBatch being zero. (internal/queue/batcher.go:481-484)
-  [counterexample]: Call BuildBatches with maxRequestSizeBytes set below the encoded empty request plus a valid QueueItem's size, maxItemsPerBatch=1, and one item that can be encoded. The size check resets the empty batch, then lines 477-479 add the oversized item to the new batch, which lines 481-482 return.
-  [agent session]: codex resume <session-id>
+  Agent       codex
+  Model       (default)
+  Effort      (default)
+  Workers     up to 4
+  Timeout     10m per claim
+  Context     (none)
+
+example.Clamp [PRECONDITION]  ✓ HOLDS (1s)
+  example/clamp.go:11
+  Claim   The lower bound does not exceed the upper bound.
+  Reason  Every caller establishes lo <= hi before calling.
+
+  Evidence
+    example/caller.go:8-10
+    The caller checks both bounds before calling.
+
+  Resume  codex resume <clamp-session>
+
+(*Cache).Get [INVARIANT]  ✗ VIOLATED (3s)
+  example/cache.go:42
+  Claim   Missing keys are never reported as cache hits.
+  Reason  The zero value is reported as a hit.
+
+  Counterexample
+    Get with an absent key returns (_, true).
+
+  Evidence
+    example/cache.go:46
+    The method always returns true.
+
+  Resume  codex resume <cache-session>
+
+2 claims: 1 holds, 1 violated, 0 inconclusive, 0 errors
+Finished in 3s. Exit code: 1.
 ```
+
+Each result header includes that claim's verification duration, excluding time waiting for a worker, in gray parentheses. Durations use forms such as `18s`, `1m12s`, and `<1s` for checks that finish in under a second.
+
+`Model` and `Effort` show `(default)` when no override was passed to the selected CLI; Precept does not infer the model or effort that the agent will choose. These defaults are gray in a color terminal. `Context` shows the number of non-empty text prompts and files appended to each verification prompt, without printing their contents.
+
+In an interactive terminal, `list` and `verify` show a gray scan spinner only if discovery takes longer than 200 ms. It disappears when discovery finishes; warnings remain visible. During verification, a live footer shows completed, active, and queued checks, elapsed time, and active claim locations. Completed claim blocks stay in scrollback. The footer disappears before the final summary, and interrupted runs preserve completed results and report how many checks remain unfinished. An empty scope produces a short summary without starting an agent.
+
+Results go to stdout; progress, discovery warnings, operational diagnostics, and the final verification-log path go to stderr. Each stream detects its own terminal status. Build logs and other non-terminal streams use plain output without cursor movement: discovery prints a start and completion line, and long scans or verification runs print a heartbeat after 30 seconds without other output. `NO_COLOR` disables color, and `TERM=dumb` also disables animation.
+
+Use `precept verify --json` for one final JSON document on stdout. Its outcomes remain in source discovery order even when checks finish out of order. Progress stays on stderr. The JSON `agent.version` field is empty because Precept checks executable availability without launching a `--version` probe.
+
+If the selected agent executable is missing, `verify` fails before scanning or loading appended context. Once verification begins, an agent process failure, crash, timeout, or invalid response becomes `ERROR` for that claim while other claims continue.
 
 See `precept verify --help` for all options.
 

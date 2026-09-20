@@ -1,11 +1,9 @@
 package verify
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -280,46 +278,51 @@ func TestRunPreservesSessionIDOnValidatorError(t *testing.T) {
 	}
 }
 
-func TestRunProgressIsDeterministic(t *testing.T) {
+func TestRunEmitsCompletionsImmediatelyAndPreservesOutcomeOrder(t *testing.T) {
 	t.Parallel()
-
-	var progress bytes.Buffer
-	validator := validatorFunc(func(_ context.Context, claim discover.Claim) (Validation, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	releaseFirst := make(chan struct{})
+	var order []int
+	var started = make(map[int]bool)
+	validator := validatorFunc(func(ctx context.Context, claim discover.Claim) (Validation, error) {
 		if claim.MarkerLine == 10 {
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return Validation{}, ctx.Err()
+			}
 		}
-		return Validation{Result: validResult("valid")}, nil
+		return Validation{Result: validResult(claim.Symbol)}, nil
 	})
-	outcomes, err := Run(context.Background(), claims(3), validator, Options{
-		Jobs:     3,
-		Timeout:  time.Second,
-		Progress: &progress,
+	outcomes, err := Run(ctx, claims(2), validator, Options{
+		Jobs: 2, Timeout: time.Second,
+		Observe: func(event Event) error {
+			if event.Outcome == nil {
+				started[event.Index] = true
+				return nil
+			}
+			if !started[event.Index] {
+				t.Errorf("completion before start: %d", event.Index)
+			}
+			order = append(order, event.Index)
+			if event.Index == 1 {
+				close(releaseFirst)
+			}
+			return nil
+		},
 	})
 	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+		t.Fatal(err)
 	}
-	if len(outcomes) != 3 {
-		t.Fatalf("len(outcomes) = %d, want 3", len(outcomes))
+	if len(order) != 2 || order[0] != 1 || order[1] != 0 {
+		t.Fatalf("completion order = %v", order)
 	}
-	want := "[1/3] holds example/example.go:10 Function0\n" +
-		"[2/3] holds example/example.go:11 Function1\n" +
-		"[3/3] holds example/example.go:12 Function2\n"
-	if got := progress.String(); got != want {
-		t.Fatalf("progress:\n%s\nwant:\n%s", got, want)
+	for index, outcome := range outcomes {
+		if outcome.Result == nil || outcome.Result.Summary != claims(2)[index].Symbol {
+			t.Fatalf("outcome %d = %+v", index, outcome)
+		}
 	}
-}
-
-type failingWriter struct {
-	once sync.Once
-}
-
-func (writer *failingWriter) Write(_ []byte) (int, error) {
-	var err error
-	writer.once.Do(func() { err = errors.New("closed") })
-	if err != nil {
-		return 0, err
-	}
-	return 0, errors.New("closed")
 }
 
 func TestRunReturnsProgressWriterErrorAfterValidation(t *testing.T) {
@@ -331,9 +334,9 @@ func TestRunReturnsProgressWriterErrorAfterValidation(t *testing.T) {
 		return Validation{Result: validResult("valid")}, nil
 	})
 	outcomes, err := Run(context.Background(), claims(4), validator, Options{
-		Jobs:     2,
-		Timeout:  time.Second,
-		Progress: &failingWriter{},
+		Jobs:    2,
+		Timeout: time.Second,
+		Observe: func(Event) error { return errors.New("closed") },
 	})
 	if err == nil {
 		t.Fatal("Run() error = nil, want progress writer error")

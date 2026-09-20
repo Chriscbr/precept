@@ -12,6 +12,7 @@ import (
 	"github.com/Chriscbr/precept/internal/discover"
 	"github.com/Chriscbr/precept/internal/textsafe"
 	"github.com/Chriscbr/precept/internal/verify"
+	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
 
@@ -112,247 +113,135 @@ func WriteText(writer io.Writer, run Run) error {
 }
 
 func writeText(writer io.Writer, run Run, style textStyle) error {
-	renderer := &textReportRenderer{writer: writer, run: run, style: style}
-	renderer.writeDiagnostics()
-	renderer.writeDiagnosticSeparator()
-	renderer.writeOutcomes()
-	renderer.writeSummarySeparator()
-	renderer.writeSummary()
-	return renderer.err
-}
-
-func writeTextOutcome(writer io.Writer, agentName string, outcome verify.Outcome, style textStyle) error {
-	renderer := &textOutcomeRenderer{
-		writer:       writer,
-		agentName:    agentName,
-		outcome:      outcome,
-		style:        style,
-		errorMessage: operationalError(outcome),
-		mark:         "!",
-		status:       "Error",
-		markColor:    ansiRed,
+	if err := writeDiagnostics(writer, run.Diagnostics); err != nil {
+		return err
 	}
-	renderer.selectStatus()
-	renderer.writeHeader()
-	renderer.writeStatus()
-	renderer.writeReason()
-	renderer.writeEvidence()
-	renderer.writeCounterexample()
-	renderer.writeSession()
-	return renderer.err
-}
-
-type textReportRenderer struct {
-	writer io.Writer
-	run    Run
-	style  textStyle
-	err    error
-}
-
-func (renderer *textReportRenderer) writeDiagnostics() {
-	for _, diagnostic := range renderer.run.Diagnostics {
-		if renderer.err != nil {
-			break
+	if len(run.Diagnostics) > 0 && len(run.Outcomes) > 0 {
+		if _, err := fmt.Fprintln(writer); err != nil {
+			return err
 		}
+	}
+	for _, outcome := range run.Outcomes {
+		if err := writeTextOutcome(writer, run.Agent.Name, outcome, style); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(writer); err != nil {
+			return err
+		}
+	}
+	return writeSummary(writer, Summarize(run.Outcomes), style)
+}
+
+func writeDiagnostics(writer io.Writer, diagnostics []discover.Diagnostic) error {
+	for _, diagnostic := range diagnostics {
 		location := textsafe.SingleLine(diagnostic.File)
 		if diagnostic.Line > 0 {
 			location = fmt.Sprintf("%s:%d", location, diagnostic.Line)
 		}
-		_, renderer.err = fmt.Fprintf(
-			renderer.writer,
-			"warning %s: %s\n",
-			location,
-			textsafe.SingleLine(diagnostic.Message),
-		)
-		if renderer.err != nil {
-			renderer.err = fmt.Errorf("write diagnostic: %w", renderer.err)
+		if _, err := fmt.Fprintf(writer, "warning %s: %s\n", location, textsafe.SingleLine(diagnostic.Message)); err != nil {
+			return fmt.Errorf("write diagnostic: %w", err)
 		}
+	}
+	return nil
+}
+
+func writeSummary(writer io.Writer, summary Summary, style textStyle) error {
+	_, err := fmt.Fprintf(writer, "%d %s: %s, %s, %s, %s\n",
+		summary.Total, plural(summary.Total, "claim", "claims"),
+		style.color(ansiGreen, fmt.Sprintf("%d holds", summary.Holds)),
+		style.color(ansiRed, fmt.Sprintf("%d violated", summary.Violated)),
+		style.color(ansiYellow, fmt.Sprintf("%d inconclusive", summary.Inconclusive)),
+		style.color(ansiRed, fmt.Sprintf("%d %s", summary.Errors, plural(summary.Errors, "error", "errors"))),
+	)
+	return err
+}
+
+// writeClaimHeading is shared by list and verify. An empty verdict produces a
+// discovery entry with the same identity, source location, and claim text.
+func writeClaimHeading(writer io.Writer, claim discover.Claim, verdict string, style textStyle) error {
+	heading := style.bold(textsafe.SingleLine(displaySymbol(claim))) + " " +
+		style.color(ansiCyan, "["+textsafe.SingleLine(string(claim.Marker))+"]")
+	if verdict != "" {
+		heading += "  " + verdict
+	}
+	if _, err := fmt.Fprintln(writer, heading); err != nil {
+		return err
+	}
+	location := fmt.Sprintf("%s:%d", textsafe.SingleLine(claim.File), claim.MarkerLine)
+	if _, err := fmt.Fprintln(writer, "  "+style.gray(location)); err != nil {
+		return err
+	}
+	return writeLabeledValue(writer, style, "Claim", textsafe.Sanitize(claim.Text))
+}
+
+func outcomeStatus(outcome verify.Outcome) (mark, status, color string) {
+	if operationalError(outcome) != "" {
+		return "!", "ERROR", ansiRed
+	}
+	switch outcome.Result.Verdict {
+	case verify.VerdictHolds:
+		return "✓", "HOLDS", ansiGreen
+	case verify.VerdictViolated:
+		return "✗", "VIOLATED", ansiRed
+	case verify.VerdictInconclusive:
+		return "?", "INCONCLUSIVE", ansiYellow
+	default:
+		return "!", "ERROR", ansiRed
 	}
 }
 
-func (renderer *textReportRenderer) writeDiagnosticSeparator() {
-	if renderer.err != nil || len(renderer.run.Diagnostics) == 0 || len(renderer.run.Outcomes) == 0 {
-		return
+func writeTextOutcome(writer io.Writer, agentName string, outcome verify.Outcome, style textStyle) error {
+	mark, status, color := outcomeStatus(outcome)
+	verdict := style.color(color, mark+" "+status) + " " + style.gray("("+elapsed(outcome.Duration)+")")
+	if err := writeClaimHeading(writer, outcome.Claim, verdict, style); err != nil {
+		return err
 	}
-	_, renderer.err = io.WriteString(renderer.writer, "\n")
-	if renderer.err != nil {
-		renderer.err = fmt.Errorf("write report separator: %w", renderer.err)
+	reason := operationalError(outcome)
+	if reason == "" {
+		reason = outcome.Result.Summary
 	}
-}
-
-func (renderer *textReportRenderer) writeOutcomes() {
-	for index, outcome := range renderer.run.Outcomes {
-		if renderer.err != nil {
-			break
+	if err := writeLabeledValue(writer, style, "Reason", textsafe.Sanitize(reason)); err != nil {
+		return err
+	}
+	if operationalError(outcome) == "" {
+		if strings.TrimSpace(outcome.Result.Counterexample) != "" {
+			if err := writeSection(writer, style, "Counterexample", outcome.Result.Counterexample); err != nil {
+				return err
+			}
 		}
-		renderer.err = writeTextOutcome(renderer.writer, renderer.run.Agent.Name, outcome, renderer.style)
-		if renderer.err == nil && index+1 < len(renderer.run.Outcomes) {
-			_, renderer.err = io.WriteString(renderer.writer, "\n")
-			if renderer.err != nil {
-				renderer.err = fmt.Errorf("write outcome separator: %w", renderer.err)
+		if _, err := fmt.Fprintln(writer, "\n  "+style.bold("Evidence")); err != nil {
+			return err
+		}
+		for index, evidence := range outcome.Result.Evidence {
+			if index > 0 {
+				if _, err := fmt.Fprintln(writer); err != nil {
+					return err
+				}
+			}
+			location := fmt.Sprintf("%s:%d", textsafe.SingleLine(evidence.File), evidence.StartLine)
+			if evidence.EndLine != evidence.StartLine {
+				location += fmt.Sprintf("-%d", evidence.EndLine)
+			}
+			if _, err := fmt.Fprintln(writer, "    "+style.gray(location)); err != nil {
+				return err
+			}
+			if err := writeIndented(writer, "    ", textsafe.Sanitize(evidence.Reason)); err != nil {
+				return err
 			}
 		}
 	}
-}
-
-func (renderer *textReportRenderer) writeSummarySeparator() {
-	if renderer.err != nil || len(renderer.run.Outcomes) == 0 {
-		return
+	if command := ResumeCommand(agentName, outcome.SessionID); command != "" {
+		_, err := fmt.Fprintln(writer, "\n  "+style.gray("Resume  "+textsafe.SingleLine(command)))
+		return err
 	}
-	_, renderer.err = io.WriteString(renderer.writer, "\n")
-	if renderer.err != nil {
-		renderer.err = fmt.Errorf("write report separator: %w", renderer.err)
-	}
-}
-
-func (renderer *textReportRenderer) writeSummary() {
-	if renderer.err != nil {
-		return
-	}
-	summary := Summarize(renderer.run.Outcomes)
-	errorNoun := "errors"
-	if summary.Errors == 1 {
-		errorNoun = "error"
-	}
-	_, renderer.err = fmt.Fprintf(
-		renderer.writer,
-		"%d claims: %d holds, %d violated, %d inconclusive, %d %s\n",
-		summary.Total,
-		summary.Holds,
-		summary.Violated,
-		summary.Inconclusive,
-		summary.Errors,
-		errorNoun,
-	)
-	if renderer.err != nil {
-		renderer.err = fmt.Errorf("write report summary: %w", renderer.err)
-	}
-}
-
-type textOutcomeRenderer struct {
-	writer       io.Writer
-	agentName    string
-	outcome      verify.Outcome
-	style        textStyle
-	errorMessage string
-	mark         string
-	status       string
-	markColor    string
-	err          error
-}
-
-func (renderer *textOutcomeRenderer) selectStatus() {
-	if renderer.errorMessage != "" {
-		return
-	}
-	switch renderer.outcome.Result.Verdict {
-	case verify.VerdictHolds:
-		renderer.mark, renderer.status, renderer.markColor = "✓", "Holds", ansiGreen
-	case verify.VerdictViolated:
-		renderer.mark, renderer.status, renderer.markColor = "✗", "Violated", ansiRed
-	case verify.VerdictInconclusive:
-		renderer.mark, renderer.status, renderer.markColor = "?", "Inconclusive", ansiYellow
-	case verify.VerdictError:
-		renderer.mark, renderer.status, renderer.markColor = "!", "Error", ansiRed
-	}
-}
-
-func (renderer *textOutcomeRenderer) writeHeader() {
-	_, renderer.err = fmt.Fprintf(
-		renderer.writer,
-		"%s %s [%s] (%s:%d)\n",
-		renderer.style.color(renderer.markColor, renderer.mark),
-		renderer.style.bold(textsafe.SingleLine(displaySymbol(renderer.outcome.Claim))),
-		textsafe.SingleLine(string(renderer.outcome.Claim.Marker)),
-		textsafe.SingleLine(renderer.outcome.Claim.File),
-		renderer.outcome.Claim.MarkerLine,
-	)
-	if renderer.err != nil {
-		renderer.err = fmt.Errorf("write outcome: %w", renderer.err)
-	}
-}
-
-func (renderer *textOutcomeRenderer) writeStatus() {
-	if renderer.err == nil {
-		renderer.err = writeLabeledValue(
-			renderer.writer,
-			renderer.style,
-			"outcome",
-			renderer.style.color(renderer.markColor, renderer.status),
-		)
-	}
-}
-
-func (renderer *textOutcomeRenderer) writeReason() {
-	if renderer.err != nil {
-		return
-	}
-	reason := renderer.errorMessage
-	if reason == "" {
-		// The agent-provided summary is concise, disclosed reasoning. Raw agent
-		// traces and hidden chain-of-thought are deliberately not report inputs.
-		reason = renderer.outcome.Result.Summary
-	}
-	renderer.err = writeLabeledValue(renderer.writer, renderer.style, "reason", textsafe.Sanitize(reason))
-}
-
-func (renderer *textOutcomeRenderer) writeEvidence() {
-	if renderer.err != nil || renderer.errorMessage != "" {
-		return
-	}
-	_, renderer.err = fmt.Fprintln(renderer.writer, "  "+renderer.style.bold(formatLabel("supporting evidence")))
-	if renderer.err != nil {
-		renderer.err = fmt.Errorf("write supporting evidence label: %w", renderer.err)
-		return
-	}
-	for _, evidence := range renderer.outcome.Result.Evidence {
-		renderer.err = writeEvidenceBullet(renderer.writer, renderer.style, evidence)
-		if renderer.err != nil {
-			break
-		}
-	}
-}
-
-func (renderer *textOutcomeRenderer) writeCounterexample() {
-	if renderer.err != nil || renderer.errorMessage != "" {
-		return
-	}
-	counterexample := strings.TrimSpace(renderer.outcome.Result.Counterexample)
-	if counterexample != "" {
-		renderer.err = writeLabeledValue(
-			renderer.writer,
-			renderer.style,
-			"counterexample",
-			textsafe.Sanitize(renderer.outcome.Result.Counterexample),
-		)
-	}
-}
-
-func (renderer *textOutcomeRenderer) writeSession() {
-	if renderer.err == nil {
-		renderer.err = writeAgentSession(
-			renderer.writer,
-			renderer.style,
-			renderer.agentName,
-			renderer.outcome.SessionID,
-		)
-	}
-}
-
-func writeAgentSession(writer io.Writer, style textStyle, agentName, sessionID string) error {
-	command := ResumeCommand(agentName, sessionID)
-	if command == "" {
-		return nil
-	}
-	return writeLabeledValue(writer, style, "agent session", textsafe.SingleLine(command))
+	return nil
 }
 
 func writeLabeledValue(writer io.Writer, style textStyle, label, value string) error {
-	lines := strings.Split(value, "\n")
-	for index, line := range lines {
-		prefix := "  " + style.bold(formatLabel(label)) + " "
+	for index, line := range strings.Split(value, "\n") {
+		prefix := "  " + style.gray(fmt.Sprintf("%-8s", label))
 		if index > 0 {
-			prefix = strings.Repeat(" ", len(label)+6)
+			prefix = "          "
 		}
 		if _, err := fmt.Fprintln(writer, prefix+line); err != nil {
 			return fmt.Errorf("write %s: %w", label, err)
@@ -361,29 +250,27 @@ func writeLabeledValue(writer io.Writer, style textStyle, label, value string) e
 	return nil
 }
 
-func formatLabel(label string) string {
-	return "[" + label + "]:"
+func writeSection(writer io.Writer, style textStyle, title, value string) error {
+	if _, err := fmt.Fprintln(writer, "\n  "+style.bold(title)); err != nil {
+		return err
+	}
+	return writeIndented(writer, "    ", textsafe.Sanitize(value))
 }
 
-func writeEvidenceBullet(writer io.Writer, style textStyle, evidence verify.Evidence) error {
-	location := fmt.Sprintf("%s:%d", textsafe.SingleLine(evidence.File), evidence.StartLine)
-	if evidence.EndLine != evidence.StartLine {
-		location = fmt.Sprintf("%s-%d", location, evidence.EndLine)
-	}
-	lines := strings.Split(textsafe.Sanitize(evidence.Reason), "\n")
-	for index, line := range lines {
-		prefix := "    • "
-		if index > 0 {
-			prefix = "      "
-		}
-		if index+1 == len(lines) {
-			line += " " + style.gray("("+location+")")
-		}
+func writeIndented(writer io.Writer, prefix, value string) error {
+	for _, line := range strings.Split(value, "\n") {
 		if _, err := fmt.Fprintln(writer, prefix+line); err != nil {
-			return fmt.Errorf("write supporting evidence: %w", err)
+			return err
 		}
 	}
 	return nil
+}
+
+func plural(count int, one, many string) string {
+	if count == 1 {
+		return one
+	}
+	return many
 }
 
 const (
@@ -411,7 +298,7 @@ func (style textStyle) color(code, value string) string {
 	if !style.enabled {
 		return value
 	}
-	return "\x1b[" + code + "m" + value + "\x1b[0m"
+	return ansi.Style{code}.Styled(value)
 }
 
 type fileDescriptorWriter interface {

@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Chriscbr/precept/internal/discover"
-	"github.com/Chriscbr/precept/internal/textsafe"
 )
 
 // Run validates claims with at most options.Jobs concurrent calls to validator.
@@ -43,7 +41,7 @@ func Run(
 	}
 
 	workerCount := min(options.Jobs, len(claims))
-	progress := newProgressWriter(options.Progress, outcomes)
+	events := &eventWriter{observe: options.Observe}
 
 	var claimMu sync.Mutex
 	next := 0
@@ -69,15 +67,18 @@ func Run(
 					return
 				}
 
+				if ctx.Err() == nil {
+					events.emit(Event{Index: index, Claim: claims[index]})
+				}
 				outcome := runOne(ctx, claims[index], validator, options.Timeout)
 				outcomes[index] = outcome
-				progress.complete(index)
+				events.emit(Event{Index: index, Claim: claims[index], Outcome: &outcome})
 			}
 		}()
 	}
 	workers.Wait()
 
-	return outcomes, progress.err()
+	return outcomes, events.err()
 }
 
 func runOne(
@@ -118,65 +119,25 @@ func runOne(
 	return outcome
 }
 
-// progressWriter serializes writes and delays completed entries only as necessary
-// to emit them in input order. This keeps progress deterministic without coupling
-// worker completion order to final reporting.
-type progressWriter struct {
+// eventWriter serializes notifications without delaying completed claims behind
+// earlier work. Rendering failures do not discard collected outcomes.
+type eventWriter struct {
 	mu       sync.Mutex
-	writer   io.Writer
-	outcomes []Outcome
-	done     []bool
-	next     int
+	observe  func(Event) error
 	writeErr error
 }
 
-func newProgressWriter(
-	writer io.Writer,
-	outcomes []Outcome,
-) *progressWriter {
-	return &progressWriter{
-		writer:   writer,
-		outcomes: outcomes,
-		done:     make([]bool, len(outcomes)),
+func (events *eventWriter) emit(event Event) {
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	if events.observe != nil && events.writeErr == nil {
+		events.writeErr = events.observe(event)
 	}
 }
 
-func (progress *progressWriter) complete(index int) {
-	progress.mu.Lock()
-	defer progress.mu.Unlock()
-
-	progress.done[index] = true
-	if progress.writer == nil || progress.writeErr != nil {
-		return
-	}
-	for progress.next < len(progress.done) && progress.done[progress.next] {
-		outcome := progress.outcomes[progress.next]
-		status := "error"
-		if outcome.Error == nil && outcome.Result != nil {
-			status = string(outcome.Result.Verdict)
-		}
-		_, progress.writeErr = fmt.Fprintf(
-			progress.writer,
-			"[%d/%d] %s %s:%d %s\n",
-			progress.next+1,
-			len(progress.done),
-			status,
-			textsafe.SingleLine(outcome.Claim.File),
-			outcome.Claim.MarkerLine,
-			textsafe.SingleLine(outcome.Claim.Symbol),
-		)
-		if progress.writeErr != nil {
-			return
-		}
-		progress.next++
-	}
-}
-
-func (progress *progressWriter) err() error {
-	progress.mu.Lock()
-	defer progress.mu.Unlock()
-	if progress.writeErr == nil {
+func (events *eventWriter) err() error {
+	if events.writeErr == nil {
 		return nil
 	}
-	return fmt.Errorf("write verification progress: %w", progress.writeErr)
+	return fmt.Errorf("write verification progress: %w", events.writeErr)
 }

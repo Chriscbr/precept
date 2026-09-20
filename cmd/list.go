@@ -3,10 +3,10 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/Chriscbr/precept/internal/discover"
 	"github.com/Chriscbr/precept/internal/report"
-	"github.com/Chriscbr/precept/internal/textsafe"
 	"github.com/spf13/cobra"
 )
 
@@ -25,9 +25,15 @@ func newListCommand() *cobra.Command {
 		Short: "List source-condition claims without launching an agent",
 		Long:  "List INVARIANT, PRECONDITION, POSTCONDITION, and ASSERTION claims without launching an agent.\n\nIf file-or-directory is omitted, Precept scans the current working directory.",
 		Args:  optionalScopeArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (returnErr error) {
 			scopeArgument := scopeOrCurrent(args)
-			if err := writeFormatted(cmd.ErrOrStderr(), "Scanning for claims in %s...\n", textsafe.SingleLine(scopeArgument)); err != nil {
+			display := report.NewProgress(cmd.OutOrStdout(), cmd.ErrOrStderr(), time.Now(), jsonOutput)
+			defer func() {
+				if err := display.Close(); err != nil {
+					returnErr = promoteLogFailure(returnErr, err)
+				}
+			}()
+			if err := display.StartScan(scopeArgument); err != nil {
 				return operationalError(err)
 			}
 			scope, err := resolveScope(cmd.Context(), scopeArgument)
@@ -37,6 +43,10 @@ func newListCommand() *cobra.Command {
 			result, err := discover.ScanContext(cmd.Context(), scope.repositoryRoot, scope.absolutePath)
 			if err != nil {
 				return operationalError(fmt.Errorf("discover claims: %w", err))
+			}
+
+			if err := display.EndScan(result); err != nil {
+				return operationalError(err)
 			}
 
 			if jsonOutput {
@@ -53,11 +63,6 @@ func newListCommand() *cobra.Command {
 				return nil
 			}
 
-			for _, diagnostic := range result.Diagnostics {
-				if err := writeFormatted(cmd.ErrOrStderr(), "%s:%d: warning: %s\n", textsafe.SingleLine(diagnostic.File), diagnostic.Line, textsafe.SingleLine(diagnostic.Message)); err != nil {
-					return operationalError(err)
-				}
-			}
 			if err := report.WriteListText(cmd.OutOrStdout(), result.Claims, compact); err != nil {
 				return operationalError(err)
 			}

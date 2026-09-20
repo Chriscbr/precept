@@ -12,7 +12,6 @@ import (
 	"github.com/Chriscbr/precept/internal/harness"
 	"github.com/Chriscbr/precept/internal/prompt"
 	"github.com/Chriscbr/precept/internal/report"
-	"github.com/Chriscbr/precept/internal/textsafe"
 	"github.com/Chriscbr/precept/internal/verify"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +63,7 @@ type verifyInvocation struct {
 	options       verifyFlags
 	startedAt     time.Time
 	log           *verificationLog
+	display       *report.Progress
 	runner        harness.Runner
 	sections      []string
 	scope         resolvedScope
@@ -94,7 +94,11 @@ func runVerify(command *cobra.Command, version, scopeArgument string, options ve
 	if state != nil {
 		state.verificationLogPath = invocation.log.Path()
 	}
+	invocation.display = report.NewProgress(command.OutOrStdout(), command.ErrOrStderr(), invocation.startedAt, options.jsonOutput)
 	defer func() {
+		if err := invocation.display.Close(); err != nil {
+			returnErr = promoteLogFailure(returnErr, err)
+		}
 		if err := invocation.log.WriteCommandExit(returnErr); err != nil {
 			returnErr = promoteLogFailure(returnErr, err)
 		}
@@ -107,26 +111,20 @@ func runVerify(command *cobra.Command, version, scopeArgument string, options ve
 }
 
 func (invocation *verifyInvocation) openLog() error {
-	err := writeFormatted(
-		invocation.command.ErrOrStderr(),
-		"Scanning for claims in %s...\n",
-		textsafe.SingleLine(invocation.scopeArgument),
-	)
-	if err == nil {
-		invocation.log, err = newVerificationLog(invocation.startedAt)
-	}
+	var err error
+	invocation.log, err = newVerificationLog(invocation.startedAt)
 	return err
 }
 
 func (invocation *verifyInvocation) execute() {
 	invocation.writeRunStart()
 	invocation.selectRunner()
+	invocation.preflight()
+	invocation.writeHarness()
 	invocation.loadContext()
 	invocation.resolveScope()
 	invocation.discoverClaims()
 	invocation.writeDiscovery()
-	invocation.preflight()
-	invocation.writeHarness()
 	invocation.writeDiscoveryStatus()
 	invocation.validateClaims()
 	invocation.buildReport()
@@ -168,6 +166,10 @@ func (invocation *verifyInvocation) resolveScope() {
 	if invocation.err != nil {
 		return
 	}
+	invocation.fail(invocation.display.StartScan(invocation.scopeArgument))
+	if invocation.err != nil {
+		return
+	}
 	invocation.scope, invocation.err = resolveScope(invocation.command.Context(), invocation.scopeArgument)
 	invocation.wrapFailure()
 }
@@ -188,7 +190,10 @@ func (invocation *verifyInvocation) discoverClaims() {
 
 func (invocation *verifyInvocation) writeDiscovery() {
 	if invocation.err == nil {
-		invocation.fail(invocation.log.WriteDiscovery(invocation.scope, invocation.discovery))
+		invocation.fail(invocation.display.EndScan(invocation.discovery))
+		if invocation.err == nil {
+			invocation.fail(invocation.log.WriteDiscovery(invocation.scope, invocation.discovery))
+		}
 	}
 }
 
@@ -196,11 +201,8 @@ func (invocation *verifyInvocation) preflight() {
 	if invocation.err != nil {
 		return
 	}
-	invocation.info = harness.Info{Name: invocation.runner.Name()}
-	if len(invocation.discovery.Claims) > 0 {
-		invocation.info, invocation.err = invocation.runner.Preflight(invocation.command.Context())
-		invocation.wrapFailure()
-	}
+	invocation.info, invocation.err = invocation.runner.Preflight(invocation.command.Context())
+	invocation.wrapFailure()
 }
 
 func (invocation *verifyInvocation) writeHarness() {
@@ -213,22 +215,17 @@ func (invocation *verifyInvocation) writeDiscoveryStatus() {
 	if invocation.err != nil {
 		return
 	}
-	if len(invocation.discovery.Claims) == 0 {
-		invocation.fail(writeFormatted(
-			invocation.command.ErrOrStderr(),
-			"Discovered 0 claim(s) in %s; nothing to validate\n",
-			textsafe.SingleLine(invocation.scope.relativePath),
-		))
-		return
+	inline := 0
+	for _, section := range invocation.options.appendPrompt {
+		if strings.TrimSpace(section) != "" {
+			inline++
+		}
 	}
-	invocation.fail(writeFormatted(
-		invocation.command.ErrOrStderr(),
-		"Discovered %d claim(s) in %s. Validating with %s using up to %d parallel worker(s)\n",
-		len(invocation.discovery.Claims),
-		textsafe.SingleLine(invocation.scope.relativePath),
-		textsafe.SingleLine(invocation.runner.Name()),
-		invocation.options.jobs,
-	))
+	invocation.fail(invocation.display.StartVerification(invocation.scope.relativePath, len(invocation.discovery.Claims), report.Settings{
+		Agent: invocation.runner.Name(), Model: invocation.options.model, Effort: invocation.options.effort,
+		Jobs: invocation.options.jobs, Timeout: invocation.options.timeout,
+		TextPrompts: inline, PromptFiles: len(invocation.sections) - inline,
+	}))
 }
 
 func (invocation *verifyInvocation) validateClaims() {
@@ -249,9 +246,9 @@ func (invocation *verifyInvocation) validateClaims() {
 		invocation.discovery.Claims,
 		validator,
 		verify.Options{
-			Jobs:     invocation.options.jobs,
-			Timeout:  invocation.options.timeout,
-			Progress: invocation.command.ErrOrStderr(),
+			Jobs:    invocation.options.jobs,
+			Timeout: invocation.options.timeout,
+			Observe: invocation.display.Observe,
 		},
 	)
 	invocation.wrapFailure()
@@ -286,11 +283,7 @@ func (invocation *verifyInvocation) writeReport() {
 	if invocation.err != nil {
 		return
 	}
-	format := report.FormatText
-	if invocation.options.jsonOutput {
-		format = report.FormatJSON
-	}
-	invocation.fail(report.Write(invocation.command.OutOrStdout(), format, invocation.report))
+	invocation.fail(invocation.display.Finish(invocation.report))
 }
 
 func (invocation *verifyInvocation) setExitStatus() {
@@ -318,7 +311,7 @@ func (invocation *verifyInvocation) wrapFailure() {
 }
 
 func promoteLogFailure(commandErr, logErr error) error {
-	if logErr == nil {
+	if logErr == nil || errors.Is(commandErr, logErr) {
 		return commandErr
 	}
 	if commandErr == nil || strings.TrimSpace(commandErr.Error()) == "" {

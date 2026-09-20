@@ -11,6 +11,7 @@ import (
 
 	"github.com/Chriscbr/precept/internal/discover"
 	"github.com/Chriscbr/precept/internal/verify"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func fixtureRun() Run {
@@ -143,22 +144,19 @@ func TestWriteTextTerminalStyle(t *testing.T) {
 		t.Fatalf("write styled text: %v", err)
 	}
 	for _, fragment := range []string{
-		"\x1b[32m✓\x1b[0m",
-		"\x1b[31m✗\x1b[0m",
-		"\x1b[33m?\x1b[0m",
-		"\x1b[31m!\x1b[0m",
-		"\x1b[1mexample.Clamp\x1b[0m",
-		"[PRECONDITION]",
-		"\x1b[1m[outcome]:\x1b[0m",
-		"\x1b[1m[reason]:\x1b[0m",
-		"\x1b[1m[supporting evidence]:\x1b[0m",
-		"\x1b[1m[counterexample]:\x1b[0m",
-		"\x1b[1m[agent session]:\x1b[0m",
-		"\x1b[32mHolds\x1b[0m",
-		"\x1b[31mViolated\x1b[0m",
-		"\x1b[33mInconclusive\x1b[0m",
-		"\x1b[31mError\x1b[0m",
-		"\x1b[90m(example/clamp.go:12-14)\x1b[0m",
+		"\x1b[32m✓ HOLDS\x1b[m",
+		"\x1b[31m✗ VIOLATED\x1b[m",
+		"\x1b[33m? INCONCLUSIVE\x1b[m",
+		"\x1b[31m! ERROR\x1b[m",
+		"\x1b[90m(<1s)\x1b[m",
+		"\x1b[1mexample.Clamp\x1b[m",
+		"\x1b[36m[PRECONDITION]\x1b[m",
+		"\x1b[90mClaim   \x1b[m",
+		"\x1b[90mReason  \x1b[m",
+		"\x1b[1mEvidence\x1b[m",
+		"\x1b[1mCounterexample\x1b[m",
+		"\x1b[90mResume  codex resume codex-holds-123\x1b[m",
+		"\x1b[90mexample/clamp.go:12-14\x1b[m",
 	} {
 		if !strings.Contains(styled.String(), fragment) {
 			t.Errorf("styled output does not contain %q:\n%s", fragment, styled.String())
@@ -225,11 +223,10 @@ func TestWriteTextRendersClaimTypeErrorWithEvidence(t *testing.T) {
 		t.Fatalf("writeText() error = %v", err)
 	}
 	for _, fragment := range []string{
-		"! example.Build [PRECONDITION]",
-		"[outcome]: Error",
-		"[reason]: the claim only describes a return value",
-		"[supporting evidence]:",
-		"1 claims: 0 holds, 0 violated, 0 inconclusive, 1 error",
+		"example.Build [PRECONDITION]  ! ERROR",
+		"Reason  the claim only describes a return value",
+		"Evidence",
+		"1 claim: 0 holds, 0 violated, 0 inconclusive, 1 error",
 	} {
 		if !strings.Contains(output.String(), fragment) {
 			t.Errorf("text output does not contain %q:\n%s", fragment, output.String())
@@ -410,12 +407,27 @@ func assertGolden(t *testing.T, name string, render func(*bytes.Buffer) error) {
 }
 
 func stripReportANSI(value string) string {
-	return strings.NewReplacer(
-		"\x1b[0m", "",
-		"\x1b[1m", "",
-		"\x1b[31m", "",
-		"\x1b[32m", "",
-		"\x1b[33m", "",
-		"\x1b[90m", "",
-	).Replace(value)
+	return ansi.Strip(value)
+}
+
+func TestCompactClaimsAlignWideUnicodeSymbols(t *testing.T) {
+	t.Parallel()
+	claims := []discover.Claim{
+		{Marker: discover.MarkerPrecondition, Package: "example", Symbol: "取得", File: "example/wide.go", MarkerLine: 3},
+		{Marker: discover.MarkerInvariant, Package: "example", Symbol: "X", File: "example/plain.go", MarkerLine: 5},
+	}
+	for _, styled := range []bool{false, true} {
+		var output bytes.Buffer
+		if err := writeCompactClaims(&output, claims, textStyle{enabled: styled}); err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(ansi.Strip(output.String()), "\n")
+		column := ansi.StringWidth(strings.Split(lines[0], "SOURCE")[0])
+		for index, claim := range claims {
+			prefix, _, found := strings.Cut(lines[index+1], claim.File)
+			if !found || ansi.StringWidth(prefix) != column {
+				t.Fatalf("source columns do not align (styled=%t):\n%s", styled, output.String())
+			}
+		}
+	}
 }

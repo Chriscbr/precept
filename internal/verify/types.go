@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"path"
 	"strings"
 	"time"
@@ -135,9 +134,19 @@ type Outcome struct {
 
 // Options controls bounded validation execution.
 type Options struct {
-	Jobs     int
-	Timeout  time.Duration
-	Progress io.Writer
+	Jobs    int
+	Timeout time.Duration
+	// Observe receives serialized start and completion events in real time.
+	// A nil Outcome marks a start; completed outcomes retain discovery order in
+	// Run's return value, independently of notification order.
+	Observe func(Event) error
+}
+
+// Event identifies a claim starting or completing verification.
+type Event struct {
+	Index   int
+	Claim   discover.Claim
+	Outcome *Outcome
 }
 
 // TimeoutError indicates that one validation exceeded its configured deadline.

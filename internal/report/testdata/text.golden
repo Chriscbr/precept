@@ -1,29 +1,44 @@
 warning example/free.go:7: INVARIANT claim is empty
 
-✓ example.Clamp [PRECONDITION] (example/clamp.go:11)
-  [outcome]: Holds
-  [reason]: both bounds are applied
-  [supporting evidence]:
-    • min and max apply both bounds (example/clamp.go:12-14)
-  [agent session]: codex resume codex-holds-123
+example.Clamp [PRECONDITION]  ✓ HOLDS (<1s)
+  example/clamp.go:11
+  Claim   result is within [lo, hi]
+  Reason  both bounds are applied
 
-✗ (*Cache).Get [INVARIANT] (example/cache.go:42)
-  [outcome]: Violated
-  [reason]: the zero value is reported as a hit
-  [supporting evidence]:
-    • the method always returns true (example/cache.go:46)
-  [counterexample]: calling Get with an absent key returns (_, true)
-  [agent session]: codex resume codex-violated-456
+  Evidence
+    example/clamp.go:12-14
+    min and max apply both bounds
 
-? example.Config [POSTCONDITION] (example/config.go:19)
-  [outcome]: Inconclusive
-  [reason]: validity depends on values loaded at runtime
-  [supporting evidence]:
-    • runtime values are loaded from the environment (example/config.go:22-24)
+  Resume  codex resume codex-holds-123
 
-! example.Parse [INVARIANT] (example/parse.go:31)
-  [outcome]: Error
-  [reason]: validation timed out after 10m0s
-  [agent session]: codex resume codex-error-789
+(*Cache).Get [INVARIANT]  ✗ VIOLATED (<1s)
+  example/cache.go:42
+  Claim   missing keys are not reported as hits
+  Reason  the zero value is reported as a hit
+
+  Counterexample
+    calling Get with an absent key returns (_, true)
+
+  Evidence
+    example/cache.go:46
+    the method always returns true
+
+  Resume  codex resume codex-violated-456
+
+example.Config [POSTCONDITION]  ? INCONCLUSIVE (<1s)
+  example/config.go:19
+  Claim   configuration is valid
+  Reason  validity depends on values loaded at runtime
+
+  Evidence
+    example/config.go:22-24
+    runtime values are loaded from the environment
+
+example.Parse [INVARIANT]  ! ERROR (<1s)
+  example/parse.go:31
+  Claim   parsing never panics
+  Reason  validation timed out after 10m0s
+
+  Resume  codex resume codex-error-789
 
 4 claims: 1 holds, 1 violated, 1 inconclusive, 1 error

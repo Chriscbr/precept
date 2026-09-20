@@ -5,10 +5,10 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/Chriscbr/precept/internal/discover"
 	"github.com/Chriscbr/precept/internal/textsafe"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // WriteListText renders discovered claims with the same symbol formatting and
@@ -45,18 +45,8 @@ func WriteListText(writer io.Writer, claims []discover.Claim, compact bool) erro
 
 func writeListClaims(writer io.Writer, claims []discover.Claim, style textStyle) error {
 	for _, claim := range claims {
-		location := fmt.Sprintf("(%s:%d)", textsafe.SingleLine(claim.File), claim.MarkerLine)
-		if _, err := fmt.Fprintf(writer, "%s %s %s\n",
-			style.bold(textsafe.SingleLine(displaySymbol(claim))),
-			style.color(ansiCyan, "["+textsafe.SingleLine(string(claim.Marker))+"]"),
-			style.gray(location),
-		); err != nil {
-			return fmt.Errorf("write claim header: %w", err)
-		}
-		for _, line := range strings.Split(claim.Text, "\n") {
-			if _, err := fmt.Fprintf(writer, "  %s\n", textsafe.SingleLine(line)); err != nil {
-				return fmt.Errorf("write claim text: %w", err)
-			}
+		if err := writeClaimHeading(writer, claim, "", style); err != nil {
+			return fmt.Errorf("write claim: %w", err)
 		}
 		if _, err := io.WriteString(writer, "\n"); err != nil {
 			return fmt.Errorf("write claim separator: %w", err)
@@ -71,17 +61,17 @@ func writeCompactClaims(writer io.Writer, claims []discover.Claim, style textSty
 	}
 	markerWidth, symbolWidth := len("KIND"), len("SYMBOL")
 	for _, claim := range claims {
-		markerWidth = max(markerWidth, utf8.RuneCountInString(textsafe.SingleLine(string(claim.Marker))))
-		symbolWidth = max(symbolWidth, utf8.RuneCountInString(textsafe.SingleLine(displaySymbol(claim))))
+		markerWidth = max(markerWidth, ansi.StringWidth(textsafe.SingleLine(string(claim.Marker))))
+		symbolWidth = max(symbolWidth, ansi.StringWidth(textsafe.SingleLine(displaySymbol(claim))))
 	}
-	header := fmt.Sprintf("%-*s  %-*s  SOURCE", markerWidth, "KIND", symbolWidth, "SYMBOL")
+	header := padColumn("KIND", markerWidth) + "  " + padColumn("SYMBOL", symbolWidth) + "  SOURCE"
 	if _, err := fmt.Fprintln(writer, style.gray(header)); err != nil {
 		return fmt.Errorf("write compact claim header: %w", err)
 	}
 	for _, claim := range claims {
 		// Pad before styling so ANSI sequences do not affect column alignment.
-		marker := fmt.Sprintf("%-*s", markerWidth, textsafe.SingleLine(string(claim.Marker)))
-		symbol := fmt.Sprintf("%-*s", symbolWidth, textsafe.SingleLine(displaySymbol(claim)))
+		marker := padColumn(textsafe.SingleLine(string(claim.Marker)), markerWidth)
+		symbol := padColumn(textsafe.SingleLine(displaySymbol(claim)), symbolWidth)
 		location := fmt.Sprintf("%s:%d", textsafe.SingleLine(claim.File), claim.MarkerLine)
 		if _, err := fmt.Fprintf(writer, "%s  %s  %s\n",
 			style.color(ansiCyan, marker), style.bold(symbol), style.gray(location),
@@ -93,4 +83,8 @@ func writeCompactClaims(writer io.Writer, claims []discover.Claim, style textSty
 		return fmt.Errorf("write claim separator: %w", err)
 	}
 	return nil
+}
+
+func padColumn(value string, width int) string {
+	return value + strings.Repeat(" ", max(0, width-ansi.StringWidth(value)))
 }

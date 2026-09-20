@@ -54,7 +54,7 @@ func TestPreflight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Preflight() error = %v", err)
 	}
-	if info.Name != "claude" || info.Version != "fake-agent 1.2.3" {
+	if info.Name != "claude" || info.Version != "" {
 		t.Fatalf("Preflight() info = %+v", info)
 	}
 	wantExecutable, err := filepath.Abs(executable)
@@ -419,17 +419,26 @@ func TestValidateRequest(t *testing.T) {
 }
 
 func TestPreflightHonorsContext(t *testing.T) {
-	executable := writeFakeExecutable(t)
-	t.Setenv("PRECEPT_FAKE_VERSION_DELAY", "30")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	startedAt := time.Now()
-	_, err := (&claudeRunner{executable: executable}).Preflight(ctx)
-	if err == nil || !strings.Contains(err.Error(), "timed out") {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := (&claudeRunner{executable: writeFakeExecutable(t)}).Preflight(ctx)
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Preflight() error = %v", err)
 	}
-	if elapsed := time.Since(startedAt); elapsed > 2*time.Second {
-		t.Fatalf("Preflight() took %s to stop its live process tree", elapsed)
+}
+
+func TestPreflightDoesNotLaunchAgent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent")
+	marker := filepath.Join(t.TempDir(), "launched")
+	t.Setenv("PRECEPT_PREFLIGHT_MARKER", marker)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n: > \"$PRECEPT_PREFLIGHT_MARKER\"\nexit 9\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&codexRunner{executable: path}).Preflight(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("preflight launched agent: %v", err)
 	}
 }
 

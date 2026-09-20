@@ -91,7 +91,7 @@ exit 9
 	if strings.Contains(stdout, `"log_path"`) {
 		t.Fatalf("verify JSON duplicated the final log-path announcement:\n%s", stdout)
 	}
-	if !strings.Contains(stderr, "Discovered 0 claim(s) in .; nothing to validate") {
+	if !strings.Contains(stderr, "No claims found in .") {
 		t.Fatalf("verify stderr does not explain the empty scope:\n%s", stderr)
 	}
 	assertFinalLogLine(t, stderr, logPath)
@@ -99,6 +99,9 @@ exit 9
 }
 
 func TestVerificationLogPathIsLastAfterOperationalError(t *testing.T) {
+	binDirectory := t.TempDir()
+	mustWriteFile(t, filepath.Join(binDirectory, "codex"), "#!/bin/sh\nexit 9\n", 0o755)
+	t.Setenv("PATH", binDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	missingContext := filepath.Join(t.TempDir(), "missing-context.md")
 	command, state := newRootCommand("0.1.0")
 	command.SetArgs([]string{
@@ -122,6 +125,107 @@ func TestVerificationLogPathIsLastAfterOperationalError(t *testing.T) {
 		t.Fatalf("verify stderr does not contain the operational error:\n%s", stderr.String())
 	}
 	assertFinalLogLine(t, stderr.String(), state.verificationLogPath)
+}
+
+func TestVerifyMissingAgentFailsBeforeScanningOrLoadingContext(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	for _, agent := range []string{"codex", "claude"} {
+		t.Run(agent, func(t *testing.T) {
+			stdout, stderr, exitCode, logPath := executeCLI(t, []string{
+				"verify", "--agent", agent, "--json",
+				"--append-prompt-file", filepath.Join(t.TempDir(), "missing-context.md"),
+				filepath.Join(t.TempDir(), "missing-scope"),
+			})
+			t.Cleanup(func() { _ = os.Remove(logPath) })
+			if exitCode != 2 || stdout != "" || !strings.Contains(stderr, "executable \""+agent+"\" was not found in PATH") {
+				t.Fatalf("missing agent: exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
+			}
+			for _, unwanted := range []string{"Scanning", "Checking", "read appended prompt file", "missing-scope"} {
+				if strings.Contains(stderr, unwanted) {
+					t.Errorf("missing agent reached another phase %q: %s", unwanted, stderr)
+				}
+			}
+			assertFinalLogLine(t, stderr, logPath)
+		})
+	}
+}
+
+func TestVerifyAgentCrashProducesPerClaimErrors(t *testing.T) {
+	repository := t.TempDir()
+	if output, err := exec.Command("git", "init", "-q", repository).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	mustWriteFile(t, filepath.Join(repository, "fixture.go"), `package fixture
+
+// POSTCONDITION: the result is one
+func One() int { return 1 }
+
+// POSTCONDITION: the result is two
+func Two() int { return 2 }
+`, 0o644)
+	binDirectory := t.TempDir()
+	callLog := filepath.Join(t.TempDir(), "calls")
+	mustWriteFile(t, filepath.Join(binDirectory, "codex"), `#!/bin/sh
+printf '%s\n' "$1" >> "$PRECEPT_FAKE_CALL_LOG"
+printf '%s\n' 'agent crashed' >&2
+kill -TERM $$
+`, 0o755)
+	t.Setenv("PATH", binDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PRECEPT_FAKE_CALL_LOG", callLog)
+
+	for _, jsonOutput := range []bool{false, true} {
+		arguments := []string{"verify", "--agent", "codex", "--jobs", "2", repository}
+		if jsonOutput {
+			arguments = append(arguments, "--json")
+		}
+		stdout, stderr, exitCode, logPath := executeCLI(t, arguments)
+		t.Cleanup(func() { _ = os.Remove(logPath) })
+		if exitCode != 2 {
+			t.Fatalf("crashed agent exit=%d stdout=%s stderr=%s", exitCode, stdout, stderr)
+		}
+		if strings.Contains(stdout+stderr, "Checking") || strings.Contains(stdout+stderr, "\x1b") {
+			t.Fatalf("plain output contains a checking phase or ANSI controls: %q %q", stdout, stderr)
+		}
+		if !strings.Contains(stderr, "Scanning for claims in "+repository) || !strings.Contains(stderr, "Found 2 claims in 1 file") {
+			t.Fatalf("scan lifecycle was not retained: %s", stderr)
+		}
+		if jsonOutput {
+			var document struct {
+				Outcomes []struct {
+					Error string `json:"error"`
+				} `json:"outcomes"`
+				Summary struct{ Total, Errors int } `json:"summary"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &document); err != nil {
+				t.Fatalf("JSON stdout is not one clean document: %v\n%s", err, stdout)
+			}
+			if len(document.Outcomes) != 2 || document.Summary.Total != 2 || document.Summary.Errors != 2 {
+				t.Fatalf("crash JSON summary = %+v", document)
+			}
+			for _, outcome := range document.Outcomes {
+				if !strings.Contains(outcome.Error, "agent crashed") {
+					t.Errorf("claim omitted crash detail: %+v", outcome)
+				}
+			}
+		} else {
+			for _, want := range []string{"fixture.One [POSTCONDITION]  ! ERROR", "fixture.Two [POSTCONDITION]  ! ERROR", "2 claims: 0 holds, 0 violated, 0 inconclusive, 2 errors"} {
+				if strings.Count(stdout, want) != 1 {
+					t.Errorf("want one %q in streamed report:\n%s", want, stdout)
+				}
+			}
+			if strings.Count(stdout, "agent crashed") != 2 || strings.Contains(stdout, "Scanning") {
+				t.Errorf("results and progress were not separated: %s", stdout)
+			}
+		}
+		assertFinalLogLine(t, stderr, logPath)
+	}
+	calls, err := os.ReadFile(callLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(calls); len(strings.Fields(got)) != 4 || strings.Contains(got, "--version") {
+		t.Fatalf("agent calls = %q; expected four claim runs and no version probe", got)
+	}
 }
 
 func TestListOutput(t *testing.T) {
@@ -152,7 +256,7 @@ func Other() {}
 		{
 			name: "text",
 			args: []string{"list", fixturePath},
-			want: "fixture.Example [INVARIANT] (fixture.go:3)\n  always returns one\n\n1 claim in 1 file\n",
+			want: "fixture.Example [INVARIANT]\n  fixture.go:3\n  Claim   always returns one\n\n1 claim in 1 file\n",
 		},
 		{
 			name: "compact",
@@ -168,7 +272,7 @@ func Other() {}
 			if stdout != test.want {
 				t.Fatalf("list output =\n%s\nwant:\n%s", stdout, test.want)
 			}
-			if !strings.Contains(stderr, "Scanning for claims in "+fixturePath+"...") {
+			if !strings.Contains(stderr, "Scanning for claims in "+fixturePath) {
 				t.Fatalf("list stderr does not immediately identify its scan scope:\n%s", stderr)
 			}
 		})
@@ -212,7 +316,7 @@ func TestListStopsPromptlyWhenCanceledAfterScanningStarts(t *testing.T) {
 	if elapsed := time.Since(startedAt); elapsed > time.Second {
 		t.Fatalf("precept list took %s to stop after cancellation", elapsed)
 	}
-	if !strings.Contains(stderr.String(), "Scanning for claims in "+repository+"...") {
+	if !strings.Contains(stderr.String(), "Scanning for claims in "+repository) {
 		t.Fatalf("list stderr does not identify its scan scope:\n%s", stderr.String())
 	}
 }
@@ -283,7 +387,7 @@ func TestUnsupportedFileExplainsCurrentSourceSupport(t *testing.T) {
 	if !strings.Contains(err.Error(), "expected a .go file") {
 		t.Fatalf("error = %q, want current source support to be explicit", err)
 	}
-	if !strings.Contains(stderr, "Scanning for claims in "+unsupportedPath+"...") {
+	if !strings.Contains(stderr, "Scanning for claims in "+unsupportedPath) {
 		t.Fatalf("list stderr does not identify its scan scope:\n%s", stderr)
 	}
 }
@@ -473,7 +577,7 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{
 	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
 		t.Fatalf("decode verify JSON: %v\nstdout:\n%s", err, stdout)
 	}
-	if document.Agent.Name != "codex" || document.Agent.Version != "codex-cli fake-1.0" {
+	if document.Agent.Name != "codex" || document.Agent.Version != "" {
 		t.Fatalf("agent metadata = %#v", document.Agent)
 	}
 	if document.Summary.Total != 2 || document.Summary.Holds != 2 {

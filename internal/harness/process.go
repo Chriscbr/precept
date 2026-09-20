@@ -14,9 +14,7 @@ import (
 
 const (
 	maxAgentOutputBytes = 8 << 20
-	maxVersionBytes     = 64 << 10
 	maxErrorDetailBytes = 32 << 10
-	preflightTimeout    = 10 * time.Second
 )
 
 type commandOutput struct {
@@ -52,34 +50,21 @@ func (buffer *boundedBuffer) bytes() []byte {
 	return bytes.Clone(buffer.buffer.Bytes())
 }
 
+// preflight only locates the CLI. Starting the agent (including a --version
+// probe) can hang or crash, so process failures belong to individual claims.
 func preflight(ctx context.Context, name, executable string) (Info, error) {
+	if err := ctx.Err(); err != nil {
+		return Info{}, err
+	}
 	path, err := exec.LookPath(executable)
 	if err != nil {
 		return Info{}, fmt.Errorf("preflight %s: executable %q was not found in PATH: %w", name, executable, err)
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
-		return Info{}, fmt.Errorf("preflight %s: resolve executable %q: %w", name, path, err)
+		return Info{}, fmt.Errorf("preflight %s: resolve executable: %w", name, err)
 	}
-
-	versionContext, cancel := context.WithTimeout(ctx, preflightTimeout)
-	defer cancel()
-	output, runErr := execute(versionContext, path, []string{"--version"}, "", "", maxVersionBytes)
-	if runErr != nil {
-		return Info{}, processError("preflight "+name, runErr, versionContext.Err(), output)
-	}
-	if output.stdoutTruncated || output.stderrTruncated {
-		return Info{}, fmt.Errorf("preflight %s: version output exceeded %d bytes", name, maxVersionBytes)
-	}
-
-	version := strings.TrimSpace(string(output.stdout))
-	if version == "" {
-		version = strings.TrimSpace(string(output.stderr))
-	}
-	if version == "" {
-		return Info{}, fmt.Errorf("preflight %s: %q --version returned no version text", name, path)
-	}
-	return Info{Name: name, Executable: path, Version: version}, nil
+	return Info{Name: name, Executable: path}, nil
 }
 
 func validateRequest(request Request) (string, error) {
