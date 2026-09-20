@@ -129,7 +129,7 @@ func TestProgressPlainHeartbeatAndCompletionBlocks(t *testing.T) {
 		t.Fatalf("duplicated output:\n%s", text)
 	}
 	for _, want := range []string{
-		"Model       (default)", "Effort      (default)", "Context     (none)", "Timeout     10m per claim", "Exit code: 1.",
+		"Model       (default)", "Effort      (default)", "Context     (none)", "Timeout     10m per claim", "Exit code: 1",
 		"example.Clamp [PRECONDITION]  ✓ HOLDS (18s)",
 		"(*Cache).Get [INVARIANT]  ✗ VIOLATED (1m12s)",
 	} {

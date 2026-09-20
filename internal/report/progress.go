@@ -266,7 +266,7 @@ func (p *Progress) Finish(run Run) error {
 		p.record(WriteJSON(p.out, run))
 	} else if p.total > 0 {
 		p.record(writeSummary(p.out, Summarize(p.completed), p.outStyle))
-		p.write(p.out, "Finished in %s. Exit code: %d.\n", elapsed(run.FinishedAt.Sub(run.StartedAt)), ExitCode(run.Outcomes))
+		p.write(p.out, "Finished in %s. Exit code: %d\n", elapsed(run.FinishedAt.Sub(run.StartedAt)), ExitCode(run.Outcomes))
 	}
 	return p.err
 }
