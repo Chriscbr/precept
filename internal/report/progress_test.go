@@ -131,8 +131,8 @@ func TestProgressPlainHeartbeatAndCompletionBlocks(t *testing.T) {
 	for _, want := range []string{
 		"Agent harness  codex",
 		"Model          (default)", "Effort         (default)", "Extra context  (none)", "Timeout        10m per claim", "Exit code: 1",
-		"example.Clamp [PRECONDITION]  ✓ HOLDS (18s)",
-		"(*Cache).Get [INVARIANT]  ✗ VIOLATED (1m12s)",
+		"example.Clamp [PRECONDITION] (clamp-precondition-1)  ✓ HOLDS (18s)",
+		"(*Cache).Get [INVARIANT] (cache-miss)  ✗ VIOLATED (1m12s)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q:\n%s", want, text)
@@ -251,7 +251,7 @@ func TestProgressActiveChecksShareClaimHeadings(t *testing.T) {
 	if err := p.StartVerification("example", 3, progressSettings()); err != nil {
 		t.Fatal(err)
 	}
-	claim := discover.Claim{Package: "example", Symbol: "Clamp", Marker: discover.MarkerPrecondition, File: "example/clamp.go", MarkerLine: 11}
+	claim := discover.Claim{ID: "clamp-precondition-1", Package: "example", Symbol: "Clamp", Marker: discover.MarkerPrecondition, File: "example/clamp.go", MarkerLine: 11}
 	if err := p.Observe(verify.Event{Index: 0, Claim: claim}); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestProgressActiveChecksShareClaimHeadings(t *testing.T) {
 	frame := ansi.Strip(strings.Join(p.frame, "\n"))
 	for _, want := range []string{
 		"  Active   1 check\n  Queued   2 checks\n  Elapsed  ",
-		"  › example.Clamp [PRECONDITION]\n    example/clamp.go:11  running ",
+		"  › example.Clamp [PRECONDITION] (clamp-precondition-1)\n    example/clamp.go:11  running ",
 		"0 holds, 0 violated, 0 inconclusive, 0 errors",
 	} {
 		if !strings.Contains(frame, want) {

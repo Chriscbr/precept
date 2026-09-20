@@ -49,6 +49,9 @@ func newListCommand() *cobra.Command {
 			if err := display.EndScan(result); err != nil {
 				return operationalError(err)
 			}
+			if err := discover.ValidateClaimIDs(result.Claims); err != nil {
+				return operationalError(err)
+			}
 
 			if jsonOutput {
 				encoder := json.NewEncoder(cmd.OutOrStdout())
@@ -61,10 +64,7 @@ func newListCommand() *cobra.Command {
 				}); err != nil {
 					return operationalError(fmt.Errorf("write JSON output: %w", err))
 				}
-				return nil
-			}
-
-			if err := report.WriteListText(cmd.OutOrStdout(), scope.repositoryRoot, result.Claims, compact); err != nil {
+			} else if err := report.WriteListText(cmd.OutOrStdout(), scope.repositoryRoot, result.Claims, compact); err != nil {
 				return operationalError(err)
 			}
 			return nil

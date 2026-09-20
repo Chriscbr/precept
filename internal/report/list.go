@@ -12,7 +12,7 @@ import (
 
 // WriteListText renders discovered claims with the same symbol formatting and
 // terminal styling policy as verification reports. Compact output lists only
-// claim types, symbols, and source locations.
+// claim IDs, types, symbols, and source locations.
 func WriteListText(writer io.Writer, repositoryRoot string, claims []discover.Claim, compact bool) error {
 	style := newTextStyle(writer, repositoryRoot)
 	var err error
@@ -61,23 +61,25 @@ func writeCompactClaims(writer io.Writer, claims []discover.Claim, style textSty
 	if len(claims) == 0 {
 		return nil
 	}
-	markerWidth, symbolWidth := len("KIND"), len("SYMBOL")
+	idWidth, markerWidth, symbolWidth := len("ID"), len("KIND"), len("SYMBOL")
 	for _, claim := range claims {
+		idWidth = max(idWidth, ansi.StringWidth(textsafe.SingleLine(claim.ID)))
 		markerWidth = max(markerWidth, ansi.StringWidth(textsafe.SingleLine(string(claim.Marker))))
 		symbolWidth = max(symbolWidth, ansi.StringWidth(textsafe.SingleLine(displaySymbol(claim))))
 	}
-	header := padColumn("KIND", markerWidth) + "  " + padColumn("SYMBOL", symbolWidth) + "  SOURCE"
+	header := padColumn("ID", idWidth) + "  " + padColumn("KIND", markerWidth) + "  " + padColumn("SYMBOL", symbolWidth) + "  SOURCE"
 	if _, err := fmt.Fprintln(writer, style.gray(header)); err != nil {
 		return fmt.Errorf("write compact claim header: %w", err)
 	}
 	for _, claim := range claims {
 		// Pad before styling so ANSI sequences do not affect column alignment.
+		id := padColumn(textsafe.SingleLine(claim.ID), idWidth)
 		marker := padColumn(textsafe.SingleLine(string(claim.Marker)), markerWidth)
 		symbol := padColumn(textsafe.SingleLine(displaySymbol(claim)), symbolWidth)
 		location := fmt.Sprintf("%s:%d", textsafe.SingleLine(claim.File), claim.MarkerLine)
 		location = style.linkPath(claim.File, location)
-		if _, err := fmt.Fprintf(writer, "%s  %s  %s\n",
-			style.color(ansiCyan, marker), style.bold(symbol), style.gray(location),
+		if _, err := fmt.Fprintf(writer, "%s  %s  %s  %s\n",
+			id, style.color(ansiCyan, marker), style.bold(symbol), style.gray(location),
 		); err != nil {
 			return fmt.Errorf("write compact claim: %w", err)
 		}

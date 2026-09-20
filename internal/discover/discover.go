@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // Marker identifies the source spelling that introduced a claim.
@@ -29,6 +30,7 @@ const (
 
 // Claim is a natural-language claim associated with a Go source subject.
 type Claim struct {
+	ID         string `json:"id"`
 	Marker     Marker `json:"marker"`
 	Text       string `json:"text"`
 	Package    string `json:"package"`
@@ -304,6 +306,7 @@ func scanFile(ctx context.Context, repoRoot, filename string) (Result, error) {
 	scan.resolveRelativePath()
 	scan.parseFile()
 	scan.collectClaims()
+	scan.assignClaimIDs()
 	return scan.result, scan.err
 }
 
@@ -384,6 +387,7 @@ func (scan *sourceScan) appendClaim(subjects subjectIndex, claim parsedClaim) {
 	}
 	subject := subjects.forComment(claim.comment)
 	scan.result.Claims = append(scan.result.Claims, Claim{
+		ID:         claim.id,
 		Marker:     claim.marker,
 		Text:       claim.text,
 		Package:    scan.parsed.Name.Name,
@@ -394,6 +398,23 @@ func (scan *sourceScan) appendClaim(subjects subjectIndex, claim parsedClaim) {
 		StartLine:  sourceLine(scan.files, subject.start),
 		EndLine:    sourceLine(scan.files, subject.end),
 	})
+}
+
+// IDs depend only on source order within this file, never on the scan scope or
+// claim text. Named claims also count so naming a claim does not renumber others.
+func (scan *sourceScan) assignClaimIDs() {
+	counts := make(map[string]int)
+	for index := range scan.result.Claims {
+		claim := &scan.result.Claims[index]
+		parts := strings.FieldsFunc(strings.ToLower(claim.Symbol), func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		})
+		base := strings.Join(parts, "-") + "-" + strings.ToLower(string(claim.Marker))
+		counts[base]++
+		if claim.ID == "" {
+			claim.ID = fmt.Sprintf("%s-%d", base, counts[base])
+		}
+	}
 }
 
 func malformedFileDiagnostic(filename string, parseErr error) Diagnostic {
@@ -414,19 +435,21 @@ func malformedFileDiagnostic(filename string, parseErr error) Diagnostic {
 type parsedClaim struct {
 	comment *ast.Comment
 	marker  Marker
+	id      string
 	text    string
 }
 
 func parseCommentGroup(group *ast.CommentGroup) []parsedClaim {
 	claims := make([]parsedClaim, 0)
 	for index, comment := range group.List {
-		marker, firstLine, ok := markerText(comment.Text)
+		marker, id, firstLine, ok := markerText(comment.Text)
 		if !ok {
 			continue
 		}
 		claims = append(claims, parsedClaim{
 			comment: comment,
 			marker:  marker,
+			id:      id,
 			text:    strings.Join(claimLines(group, index, firstLine), "\n"),
 		})
 	}
@@ -453,7 +476,7 @@ func claimLines(group *ast.CommentGroup, markerIndex int, firstLine string) []st
 }
 
 func startsClaim(comment string) bool {
-	_, _, marker := markerText(comment)
+	_, _, _, marker := markerText(comment)
 	return marker || resemblesMarker(comment)
 }
 
@@ -466,30 +489,43 @@ func resemblesMarker(raw string) bool {
 		if len(remainder) < len(marker) || !strings.EqualFold(remainder[:len(marker)], marker) {
 			continue
 		}
-		return strings.HasPrefix(trimHorizontalLeft(remainder[len(marker):]), ":")
+		suffix := remainder[len(marker):]
+		return strings.HasPrefix(suffix, ":") ||
+			(strings.HasPrefix(suffix, " ") || strings.HasPrefix(suffix, "\t")) && strings.Contains(suffix, ":")
 	}
 	return false
 }
 
-func markerText(raw string) (Marker, string, bool) {
-	const (
-		invariant     = "// INVARIANT:"
-		precondition  = "// PRECONDITION:"
-		postcondition = "// POSTCONDITION:"
-		assertion     = "// ASSERTION:"
-	)
-	switch {
-	case strings.HasPrefix(raw, invariant):
-		return MarkerInvariant, trimHorizontal(raw[len(invariant):]), true
-	case strings.HasPrefix(raw, precondition):
-		return MarkerPrecondition, trimHorizontal(raw[len(precondition):]), true
-	case strings.HasPrefix(raw, postcondition):
-		return MarkerPostcondition, trimHorizontal(raw[len(postcondition):]), true
-	case strings.HasPrefix(raw, assertion):
-		return MarkerAssertion, trimHorizontal(raw[len(assertion):]), true
-	default:
-		return "", "", false
+func markerText(raw string) (Marker, string, string, bool) {
+	for _, marker := range []Marker{MarkerInvariant, MarkerPrecondition, MarkerPostcondition, MarkerAssertion} {
+		suffix, ok := strings.CutPrefix(raw, "// "+string(marker))
+		if !ok {
+			continue
+		}
+		if text, ok := strings.CutPrefix(suffix, ":"); ok {
+			return marker, "", trimHorizontal(text), true
+		}
+		if named, ok := strings.CutPrefix(suffix, " "); ok {
+			id, text, found := strings.Cut(named, ":")
+			if found && validClaimID(id) {
+				return marker, id, trimHorizontal(text), true
+			}
+		}
 	}
+	return "", "", "", false
+}
+
+func validClaimID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for index, r := range id {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || index > 0 && strings.ContainsRune("-_.", r) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func lineCommentText(raw string) (string, bool) {

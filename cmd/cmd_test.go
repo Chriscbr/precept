@@ -208,7 +208,7 @@ kill -TERM $$
 				}
 			}
 		} else {
-			for _, want := range []string{"fixture.One [POSTCONDITION]  ! ERROR", "fixture.Two [POSTCONDITION]  ! ERROR", "2 claims: 0 holds, 0 violated, 0 inconclusive, 2 errors"} {
+			for _, want := range []string{"fixture.One [POSTCONDITION] (one-postcondition-1)  ! ERROR", "fixture.Two [POSTCONDITION] (two-postcondition-1)  ! ERROR", "2 claims: 0 holds, 0 violated, 0 inconclusive, 2 errors"} {
 				if strings.Count(stdout, want) != 1 {
 					t.Errorf("want one %q in streamed report:\n%s", want, stdout)
 				}
@@ -256,12 +256,12 @@ func Other() {}
 		{
 			name: "text",
 			args: []string{"list", fixturePath},
-			want: "fixture.Example [INVARIANT]\n  Source  fixture.go:3\n  Claim   always returns one\n\n1 claim in 1 file\n",
+			want: "fixture.Example [INVARIANT] (example-invariant-1)\n  Source  fixture.go:3\n  Claim   always returns one\n\n1 claim in 1 file\n",
 		},
 		{
 			name: "compact",
 			args: []string{"list", "--compact", fixturePath},
-			want: "KIND       SYMBOL           SOURCE\nINVARIANT  fixture.Example  fixture.go:3\n\n1 claim in 1 file\n",
+			want: "ID                   KIND       SYMBOL           SOURCE\nexample-invariant-1  INVARIANT  fixture.Example  fixture.go:3\n\n1 claim in 1 file\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -451,6 +451,8 @@ func TestValidateVerifyFlags(t *testing.T) {
 	}{
 		{name: "missing harness", mutate: func(flags *verifyFlags) { flags.harness = "" }, message: "--harness"},
 		{name: "zero jobs", mutate: func(flags *verifyFlags) { flags.jobs = 0 }, message: "--jobs"},
+		{name: "empty claim ID", mutate: func(flags *verifyFlags) { flags.claims = []string{""} }, message: "--claim"},
+		{name: "blank claim ID", mutate: func(flags *verifyFlags) { flags.claims = []string{" \t"} }, message: "--claim"},
 		{name: "zero timeout", mutate: func(flags *verifyFlags) { flags.timeout = 0 }, message: "--timeout"},
 	}
 	for _, test := range tests {

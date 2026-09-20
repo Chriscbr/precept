@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	"github.com/Chriscbr/precept/internal/report"
-	"github.com/Chriscbr/precept/internal/textsafe"
 	"github.com/spf13/cobra"
 )
 
@@ -85,13 +84,13 @@ func executeRoot(ctx context.Context, root *cobra.Command, state *executionState
 	case errors.As(err, &exitErr):
 		exitCode = exitErr.code
 		if exitErr.err != nil {
-			if _, writeErr := fmt.Fprintf(root.ErrOrStderr(), "error: %s\n", textsafe.SingleLine(exitErr.err.Error())); writeErr != nil {
+			if writeErr := report.WriteError(root.ErrOrStderr(), exitErr.err); writeErr != nil {
 				exitCode = 2
 			}
 		}
 	default:
 		exitCode = 2
-		_, _ = fmt.Fprintf(root.ErrOrStderr(), "error: %s\n", textsafe.SingleLine(err.Error()))
+		_ = report.WriteError(root.ErrOrStderr(), err)
 	}
 
 	if state != nil && state.verificationLogPath != "" {

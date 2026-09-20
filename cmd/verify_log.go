@@ -80,6 +80,9 @@ func (log *verificationLog) WriteRunStart(version, scopeArgument string, options
 	_, _ = fmt.Fprintf(&body, "effort: %s\n", textsafe.SingleLine(options.effort))
 	_, _ = fmt.Fprintf(&body, "jobs: %d\n", options.jobs)
 	_, _ = fmt.Fprintf(&body, "per_claim_timeout: %s\n", options.timeout)
+	for _, id := range options.claims {
+		_, _ = fmt.Fprintf(&body, "selected_claim: %s\n", textsafe.SingleLine(id))
+	}
 	return log.WriteSection("run", body.String())
 }
 
@@ -116,6 +119,7 @@ func (log *verificationLog) WriteAgentSession(
 	failed bool,
 ) error {
 	var body strings.Builder
+	_, _ = fmt.Fprintf(&body, "claim_id: %s\n", textsafe.SingleLine(claim.ID))
 	_, _ = fmt.Fprintf(&body, "session_id: %s\n", textsafe.SingleLine(run.SessionID))
 	_, _ = fmt.Fprintf(&body, "resume_command: %s\n", textsafe.SingleLine(report.ResumeCommand(agentName, run.SessionID)))
 	if run.ConversationPath != "" {

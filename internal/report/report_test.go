@@ -36,6 +36,7 @@ func fixtureRun() Run {
 		Outcomes: []verify.Outcome{
 			{
 				Claim: discover.Claim{
+					ID:         "clamp-precondition-1",
 					Marker:     discover.MarkerPrecondition,
 					Text:       "result is within [lo, hi]",
 					Package:    "example",
@@ -61,6 +62,7 @@ func fixtureRun() Run {
 			},
 			{
 				Claim: discover.Claim{
+					ID:         "cache-miss",
 					Marker:     discover.MarkerInvariant,
 					Text:       "missing keys are not reported as hits",
 					Package:    "example",
@@ -87,6 +89,7 @@ func fixtureRun() Run {
 			},
 			{
 				Claim: discover.Claim{
+					ID:         "config-postcondition-1",
 					Marker:     discover.MarkerPostcondition,
 					Text:       "configuration is valid",
 					Package:    "example",
@@ -111,6 +114,7 @@ func fixtureRun() Run {
 			},
 			{
 				Claim: discover.Claim{
+					ID:         "parse-invariant-1",
 					Marker:     discover.MarkerInvariant,
 					Text:       "parsing never panics",
 					Package:    "example",
@@ -194,6 +198,7 @@ func TestWriteTextEscapesTerminalControls(t *testing.T) {
 
 	run := fixtureRun()
 	run.Outcomes = run.Outcomes[:1]
+	run.Outcomes[0].Claim.ID = "id\x1b]52;clipboard\a"
 	run.Outcomes[0].Result.Summary = "safe\x1b]52;clipboard\a\ncontinued"
 	run.Outcomes[0].Result.Evidence[0].Reason = "evidence\rspoof"
 	run.Outcomes[0].SessionID = "thread/\x1b]52;clipboard\a?#"

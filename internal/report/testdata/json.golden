@@ -24,6 +24,7 @@
   "outcomes": [
     {
       "claim": {
+        "id": "clamp-precondition-1",
         "marker": "PRECONDITION",
         "text": "result is within [lo, hi]",
         "package": "example",
@@ -53,6 +54,7 @@
     },
     {
       "claim": {
+        "id": "cache-miss",
         "marker": "INVARIANT",
         "text": "missing keys are not reported as hits",
         "package": "example",
@@ -82,6 +84,7 @@
     },
     {
       "claim": {
+        "id": "config-postcondition-1",
         "marker": "POSTCONDITION",
         "text": "configuration is valid",
         "package": "example",
@@ -109,6 +112,7 @@
     },
     {
       "claim": {
+        "id": "parse-invariant-1",
         "marker": "INVARIANT",
         "text": "parsing never panics",
         "package": "example",

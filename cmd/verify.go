@@ -27,6 +27,7 @@ type verifyFlags struct {
 	effort            string
 	jobs              int
 	timeout           time.Duration
+	claims            []string
 	appendPrompt      []string
 	appendPromptFiles []string
 	jsonOutput        bool
@@ -50,6 +51,7 @@ func newVerifyCommand(version string, state *executionState) *cobra.Command {
 	flags.StringVar(&options.effort, "effort", "", "reasoning-effort override passed to the selected harness")
 	flags.IntVar(&options.jobs, "jobs", defaultJobs, "maximum concurrent agent subprocesses")
 	flags.DurationVar(&options.timeout, "timeout", defaultTimeout, "timeout for each claim")
+	flags.StringArrayVar(&options.claims, "claim", nil, "verify only claims with this ID across the selected scope (repeatable)")
 	flags.StringArrayVar(&options.appendPrompt, "append-prompt", nil, "additional context appended to every verifier (repeatable)")
 	flags.StringArrayVar(&options.appendPromptFiles, "append-prompt-file", nil, "file of context appended to every verifier (repeatable)")
 	flags.BoolVar(&options.jsonOutput, "json", false, "emit JSON instead of text")
@@ -125,6 +127,8 @@ func (invocation *verifyInvocation) execute() {
 	invocation.resolveScope()
 	invocation.discoverClaims()
 	invocation.writeDiscovery()
+	invocation.validateClaimIDs()
+	invocation.selectClaims()
 	invocation.writeDiscoveryStatus()
 	invocation.validateClaims()
 	invocation.buildReport()
@@ -206,6 +210,47 @@ func (invocation *verifyInvocation) preflight() {
 	}
 	invocation.info, invocation.err = invocation.runner.Preflight(invocation.command.Context())
 	invocation.wrapFailure()
+}
+
+func (invocation *verifyInvocation) selectClaims() {
+	if invocation.err != nil || len(invocation.options.claims) == 0 {
+		return
+	}
+	selected, err := selectClaims(invocation.discovery.Claims, invocation.options.claims)
+	if err != nil {
+		invocation.fail(err)
+		return
+	}
+	invocation.discovery.Claims = selected
+}
+
+func (invocation *verifyInvocation) validateClaimIDs() {
+	if invocation.err == nil {
+		invocation.fail(discover.ValidateClaimIDs(invocation.discovery.Claims))
+	}
+}
+
+// Validate every requested ID before returning any claims. Keep discovery order
+// and verify each claim once, even when its flag is repeated.
+func selectClaims(claims []discover.Claim, ids []string) ([]discover.Claim, error) {
+	available := make(map[string]bool)
+	for _, claim := range claims {
+		available[claim.ID] = true
+	}
+	requested := make(map[string]bool)
+	for _, id := range ids {
+		if !available[id] {
+			return nil, fmt.Errorf("claim ID %q was not found in the selected scope; use precept list to see available IDs", id)
+		}
+		requested[id] = true
+	}
+	selected := make([]discover.Claim, 0, len(requested))
+	for _, claim := range claims {
+		if requested[claim.ID] {
+			selected = append(selected, claim)
+		}
+	}
+	return selected, nil
 }
 
 func (invocation *verifyInvocation) writeHarness() {
@@ -333,6 +378,11 @@ func validateVerifyFlags(options verifyFlags) error {
 	}
 	if options.timeout <= 0 {
 		return fmt.Errorf("--timeout must be positive")
+	}
+	for _, id := range options.claims {
+		if strings.TrimSpace(id) == "" {
+			return fmt.Errorf("--claim must specify a non-empty claim ID")
+		}
 	}
 	return nil
 }

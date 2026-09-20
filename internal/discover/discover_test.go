@@ -18,6 +18,7 @@ func TestResultJSONUsesSnakeCaseFields(t *testing.T) {
 
 	result := Result{
 		Claims: []Claim{{
+			ID:         "example-invariant-1",
 			Marker:     MarkerInvariant,
 			Text:       "claim",
 			Package:    "sample",
@@ -34,7 +35,7 @@ func TestResultJSONUsesSnakeCaseFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	const want = `{"claims":[{"marker":"INVARIANT","text":"claim","package":"sample","kind":"func","symbol":"Example","file":"sample.go","marker_line":1,"start_line":2,"end_line":3}],"diagnostics":[{"file":"sample.go","line":4,"message":"message"}]}`
+	const want = `{"claims":[{"id":"example-invariant-1","marker":"INVARIANT","text":"claim","package":"sample","kind":"func","symbol":"Example","file":"sample.go","marker_line":1,"start_line":2,"end_line":3}],"diagnostics":[{"file":"sample.go","line":4,"message":"message"}]}`
 	if string(encoded) != want {
 		t.Fatalf("json.Marshal() = %s, want %s", encoded, want)
 	}
@@ -47,6 +48,7 @@ func TestMarkerText(t *testing.T) {
 		name       string
 		raw        string
 		wantMarker Marker
+		wantID     string
 		wantText   string
 		wantOK     bool
 	}{
@@ -62,6 +64,22 @@ func TestMarkerText(t *testing.T) {
 		{name: "canonical assertion", raw: "// ASSERTION: value is initialized", wantMarker: MarkerAssertion, wantText: "value is initialized", wantOK: true},
 		{name: "assertion without space after colon", raw: "// ASSERTION:value is initialized", wantMarker: MarkerAssertion, wantText: "value is initialized", wantOK: true},
 		{name: "empty assertion", raw: "// ASSERTION:\t", wantMarker: MarkerAssertion, wantOK: true},
+		{name: "named invariant", raw: "// INVARIANT buffer-single-owner: one owner", wantMarker: MarkerInvariant, wantID: "buffer-single-owner", wantText: "one owner", wantOK: true},
+		{name: "named precondition", raw: "// PRECONDITION input.valid_v2:valid input", wantMarker: MarkerPrecondition, wantID: "input.valid_v2", wantText: "valid input", wantOK: true},
+		{name: "named postcondition", raw: "// POSTCONDITION Closed: closed: yes", wantMarker: MarkerPostcondition, wantID: "Closed", wantText: "closed: yes", wantOK: true},
+		{name: "named assertion", raw: "// ASSERTION 123: initialized", wantMarker: MarkerAssertion, wantID: "123", wantText: "initialized", wantOK: true},
+		{name: "named empty claim", raw: "// INVARIANT owner:\t", wantMarker: MarkerInvariant, wantID: "owner", wantOK: true},
+		{name: "unicode ID", raw: "// INVARIANT 所有者: one owner", wantMarker: MarkerInvariant, wantID: "所有者", wantText: "one owner", wantOK: true},
+		{name: "named lowercase marker", raw: "// invariant owner: ignored"},
+		{name: "named missing separator", raw: "//INVARIANT owner: ignored"},
+		{name: "named extra separator", raw: "//  INVARIANT owner: ignored"},
+		{name: "extra space before ID", raw: "// INVARIANT  owner: ignored"},
+		{name: "tab before ID", raw: "// INVARIANT\towner: ignored"},
+		{name: "space inside ID", raw: "// INVARIANT one owner: ignored"},
+		{name: "space after ID", raw: "// INVARIANT owner : ignored"},
+		{name: "invalid ID punctuation", raw: "// INVARIANT owner!: ignored"},
+		{name: "invalid ID prefix", raw: "// INVARIANT -owner: ignored"},
+		{name: "named missing colon", raw: "// INVARIANT owner ignored"},
 		{name: "removed precept", raw: "// PRECEPT: ignored"},
 		{name: "invariant without separator space", raw: "//INVARIANT: ignored"},
 		{name: "precondition without separator space", raw: "//PRECONDITION: ignored"},
@@ -83,7 +101,10 @@ func TestMarkerText(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			gotMarker, gotText, gotOK := markerText(test.raw)
+			gotMarker, gotID, gotText, gotOK := markerText(test.raw)
+			if gotID != test.wantID {
+				t.Fatalf("markerText(%q) ID = %q, want %q", test.raw, gotID, test.wantID)
+			}
 			if gotOK != test.wantOK || gotMarker != test.wantMarker || gotText != test.wantText {
 				t.Fatalf(
 					"markerText(%q) = (%q, %q, %t), want (%q, %q, %t)",
@@ -110,26 +131,26 @@ func TestScanAssociatesClaimsWithSubjects(t *testing.T) {
 	}
 
 	wantClaims := []Claim{
-		{Marker: MarkerInvariant, Text: "package documentation is associated with the package", Package: "fixture", Kind: "package", Symbol: "fixture", File: "valid/a_claims.go", MarkerLine: 1, StartLine: 2, EndLine: 2},
-		{Marker: MarkerPrecondition, Text: "function documentation is associated with the function", Package: "fixture", Kind: "func", Symbol: "Documented", File: "valid/a_claims.go", MarkerLine: 4, StartLine: 5, EndLine: 5},
-		{Marker: MarkerInvariant, Text: "claims in a function body are associated with the function", Package: "fixture", Kind: "func", Symbol: "InBody", File: "valid/a_claims.go", MarkerLine: 8, StartLine: 7, EndLine: 10},
-		{Marker: MarkerPostcondition, Text: "claims in a method body are associated with the method", Package: "fixture", Kind: "method", Symbol: "(*Cache).Get", File: "valid/a_claims.go", MarkerLine: 15, StartLine: 14, EndLine: 17},
-		{Marker: MarkerInvariant, Text: "named types remain supported", Package: "fixture", Kind: "type", Symbol: "Named", File: "valid/a_claims.go", MarkerLine: 19, StartLine: 20, EndLine: 25},
-		{Marker: MarkerInvariant, Text: "field documentation is associated with the field", Package: "fixture", Kind: "field", Symbol: "Named.Value", File: "valid/a_claims.go", MarkerLine: 21, StartLine: 22, EndLine: 22},
-		{Marker: MarkerInvariant, Text: "trailing field comments are associated with the field", Package: "fixture", Kind: "field", Symbol: "Named.Count", File: "valid/a_claims.go", MarkerLine: 24, StartLine: 24, EndLine: 24},
-		{Marker: MarkerPrecondition, Text: "grouped type specifications are associated with the named type", Package: "fixture", Kind: "type", Symbol: "Grouped", File: "valid/a_claims.go", MarkerLine: 28, StartLine: 29, EndLine: 29},
-		{Marker: MarkerPrecondition, Text: "first claim", Package: "fixture", Kind: "func", Symbol: "Multiple", File: "valid/a_claims.go", MarkerLine: 33, StartLine: 32, EndLine: 36},
-		{Marker: MarkerPostcondition, Text: "second claim\nwith a continuation", Package: "fixture", Kind: "func", Symbol: "Multiple", File: "valid/a_claims.go", MarkerLine: 34, StartLine: 32, EndLine: 36},
-		{Marker: MarkerInvariant, Text: "an empty marker can use a continuation", Package: "fixture", Kind: "func", Symbol: "ContinuationOnly", File: "valid/a_claims.go", MarkerLine: 38, StartLine: 40, EndLine: 40},
-		{Marker: MarkerPostcondition, Text: "locations use physical source lines", Package: "fixture", Kind: "func", Symbol: "PhysicalLines", File: "valid/a_claims.go", MarkerLine: 49, StartLine: 52, EndLine: 52},
-		{Marker: MarkerInvariant, Text: "a free-standing claim is associated with the package", Package: "fixture", Kind: "package", Symbol: "fixture", File: "valid/b_subjects.go", MarkerLine: 3, StartLine: 1, EndLine: 1},
-		{Marker: MarkerPrecondition, Text: "variables can be direct subjects", Package: "fixture", Kind: "var", Symbol: "Variable", File: "valid/b_subjects.go", MarkerLine: 7, StartLine: 8, EndLine: 8},
-		{Marker: MarkerInvariant, Text: "constants can be direct subjects", Package: "fixture", Kind: "const", Symbol: "Limit", File: "valid/b_subjects.go", MarkerLine: 11, StartLine: 12, EndLine: 12},
-		{Marker: MarkerPostcondition, Text: "a grouped declaration comment falls back to the package", Package: "fixture", Kind: "package", Symbol: "fixture", File: "valid/b_subjects.go", MarkerLine: 15, StartLine: 1, EndLine: 1},
-		{Marker: MarkerInvariant, Text: "trailing value comments use the value as their subject", Package: "fixture", Kind: "var", Symbol: "Trailing", File: "valid/b_subjects.go", MarkerLine: 20, StartLine: 20, EndLine: 20},
-		{Marker: MarkerPrecondition, Text: "valid claim before an invalid condition", Package: "fixture", Kind: "func", Symbol: "InvalidConditionBoundary", File: "valid/b_subjects.go", MarkerLine: 29, StartLine: 28, EndLine: 33},
-		{Marker: MarkerPostcondition, Text: "test files with claims are included", Package: "fixture", Kind: "func", Symbol: "TestHelper", File: "valid/c_fixture_test.go", MarkerLine: 3, StartLine: 4, EndLine: 4},
-		{Marker: MarkerAssertion, Text: "value is available at this exact program point", Package: "fixture", Kind: "func", Symbol: "Asserted", File: "valid/d_assertions.go", MarkerLine: 4, StartLine: 3, EndLine: 6},
+		{ID: "fixture-invariant-1", Marker: MarkerInvariant, Text: "package documentation is associated with the package", Package: "fixture", Kind: "package", Symbol: "fixture", File: "valid/a_claims.go", MarkerLine: 1, StartLine: 2, EndLine: 2},
+		{ID: "documented-precondition-1", Marker: MarkerPrecondition, Text: "function documentation is associated with the function", Package: "fixture", Kind: "func", Symbol: "Documented", File: "valid/a_claims.go", MarkerLine: 4, StartLine: 5, EndLine: 5},
+		{ID: "inbody-invariant-1", Marker: MarkerInvariant, Text: "claims in a function body are associated with the function", Package: "fixture", Kind: "func", Symbol: "InBody", File: "valid/a_claims.go", MarkerLine: 8, StartLine: 7, EndLine: 10},
+		{ID: "cache-get-postcondition-1", Marker: MarkerPostcondition, Text: "claims in a method body are associated with the method", Package: "fixture", Kind: "method", Symbol: "(*Cache).Get", File: "valid/a_claims.go", MarkerLine: 15, StartLine: 14, EndLine: 17},
+		{ID: "named-invariant-1", Marker: MarkerInvariant, Text: "named types remain supported", Package: "fixture", Kind: "type", Symbol: "Named", File: "valid/a_claims.go", MarkerLine: 19, StartLine: 20, EndLine: 25},
+		{ID: "named-value-invariant-1", Marker: MarkerInvariant, Text: "field documentation is associated with the field", Package: "fixture", Kind: "field", Symbol: "Named.Value", File: "valid/a_claims.go", MarkerLine: 21, StartLine: 22, EndLine: 22},
+		{ID: "named-count-invariant-1", Marker: MarkerInvariant, Text: "trailing field comments are associated with the field", Package: "fixture", Kind: "field", Symbol: "Named.Count", File: "valid/a_claims.go", MarkerLine: 24, StartLine: 24, EndLine: 24},
+		{ID: "grouped-precondition-1", Marker: MarkerPrecondition, Text: "grouped type specifications are associated with the named type", Package: "fixture", Kind: "type", Symbol: "Grouped", File: "valid/a_claims.go", MarkerLine: 28, StartLine: 29, EndLine: 29},
+		{ID: "multiple-precondition-1", Marker: MarkerPrecondition, Text: "first claim", Package: "fixture", Kind: "func", Symbol: "Multiple", File: "valid/a_claims.go", MarkerLine: 33, StartLine: 32, EndLine: 36},
+		{ID: "multiple-postcondition-1", Marker: MarkerPostcondition, Text: "second claim\nwith a continuation", Package: "fixture", Kind: "func", Symbol: "Multiple", File: "valid/a_claims.go", MarkerLine: 34, StartLine: 32, EndLine: 36},
+		{ID: "continuationonly-invariant-1", Marker: MarkerInvariant, Text: "an empty marker can use a continuation", Package: "fixture", Kind: "func", Symbol: "ContinuationOnly", File: "valid/a_claims.go", MarkerLine: 38, StartLine: 40, EndLine: 40},
+		{ID: "physicallines-postcondition-1", Marker: MarkerPostcondition, Text: "locations use physical source lines", Package: "fixture", Kind: "func", Symbol: "PhysicalLines", File: "valid/a_claims.go", MarkerLine: 49, StartLine: 52, EndLine: 52},
+		{ID: "fixture-invariant-1", Marker: MarkerInvariant, Text: "a free-standing claim is associated with the package", Package: "fixture", Kind: "package", Symbol: "fixture", File: "valid/b_subjects.go", MarkerLine: 3, StartLine: 1, EndLine: 1},
+		{ID: "variable-precondition-1", Marker: MarkerPrecondition, Text: "variables can be direct subjects", Package: "fixture", Kind: "var", Symbol: "Variable", File: "valid/b_subjects.go", MarkerLine: 7, StartLine: 8, EndLine: 8},
+		{ID: "limit-invariant-1", Marker: MarkerInvariant, Text: "constants can be direct subjects", Package: "fixture", Kind: "const", Symbol: "Limit", File: "valid/b_subjects.go", MarkerLine: 11, StartLine: 12, EndLine: 12},
+		{ID: "fixture-postcondition-1", Marker: MarkerPostcondition, Text: "a grouped declaration comment falls back to the package", Package: "fixture", Kind: "package", Symbol: "fixture", File: "valid/b_subjects.go", MarkerLine: 15, StartLine: 1, EndLine: 1},
+		{ID: "trailing-invariant-1", Marker: MarkerInvariant, Text: "trailing value comments use the value as their subject", Package: "fixture", Kind: "var", Symbol: "Trailing", File: "valid/b_subjects.go", MarkerLine: 20, StartLine: 20, EndLine: 20},
+		{ID: "invalidconditionboundary-precondition-1", Marker: MarkerPrecondition, Text: "valid claim before an invalid condition", Package: "fixture", Kind: "func", Symbol: "InvalidConditionBoundary", File: "valid/b_subjects.go", MarkerLine: 29, StartLine: 28, EndLine: 33},
+		{ID: "testhelper-postcondition-1", Marker: MarkerPostcondition, Text: "test files with claims are included", Package: "fixture", Kind: "func", Symbol: "TestHelper", File: "valid/c_fixture_test.go", MarkerLine: 3, StartLine: 4, EndLine: 4},
+		{ID: "asserted-assertion-1", Marker: MarkerAssertion, Text: "value is available at this exact program point", Package: "fixture", Kind: "func", Symbol: "Asserted", File: "valid/d_assertions.go", MarkerLine: 4, StartLine: 3, EndLine: 6},
 	}
 	if !reflect.DeepEqual(result.Claims, wantClaims) {
 		t.Fatalf("Scan() claims mismatch\n got: %#v\nwant: %#v", result.Claims, wantClaims)
@@ -141,6 +162,118 @@ func TestScanAssociatesClaimsWithSubjects(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result.Diagnostics, wantDiagnostics) {
 		t.Fatalf("Scan() diagnostics mismatch\n got: %#v\nwant: %#v", result.Diagnostics, wantDiagnostics)
+	}
+}
+
+func TestClaimIDsAreStableAcrossScopesAndEdits(t *testing.T) {
+	t.Parallel()
+	repoRoot := t.TempDir()
+	scope := filepath.Join(repoRoot, "queue")
+	mustMkdir(t, scope)
+	filename := filepath.Join(scope, "buffer.go")
+	const source = `package queue
+
+// INVARIANT buffer-single-owner: exactly one owner
+// even when reused
+type Buffer struct{}
+
+// PRECONDITION: size is positive
+// PRECONDITION valid-size: size fits in memory
+// PRECONDITION: size is bounded
+func NewBuffer(size int) *Buffer { return &Buffer{} }
+
+// POSTCONDITION closed: closed on return
+// POSTCONDITION: resources are released
+func (b *Buffer) Close() {
+    // ASSERTION:
+    // cleanup is about to start
+}
+
+// INVARIANT: independent claim
+func Other() {}
+`
+	mustWriteFile(t, filename, source)
+	want := []string{"buffer-single-owner", "newbuffer-precondition-1", "valid-size", "newbuffer-precondition-3", "closed", "buffer-close-postcondition-2", "buffer-close-assertion-1", "other-invariant-1"}
+	checkIDs := func(scope string, expected []string) {
+		t.Helper()
+		result, err := Scan(repoRoot, scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Diagnostics) != 0 {
+			t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics)
+		}
+		var ids []string
+		for _, claim := range result.Claims {
+			if claim.File == "queue/buffer.go" {
+				ids = append(ids, claim.ID)
+			}
+		}
+		if !reflect.DeepEqual(ids, expected) {
+			t.Fatalf("IDs for %s = %v, want %v", scope, ids, expected)
+		}
+	}
+	checkIDs(filename, want)
+	// The same symbol in another file must not influence generated IDs.
+	mustWriteFile(t, filepath.Join(repoRoot, "other.go"), source)
+	checkIDs(scope, want)
+	checkIDs(repoRoot, want)
+	// Moving the claims by adding lines and editing prose preserves their IDs.
+	edited := "// unrelated header\n\n" + strings.ReplaceAll(source, "size is positive", "size is greater than zero")
+	mustWriteFile(t, filename, edited)
+	checkIDs(filename, want)
+	// Giving an earlier claim a name must not renumber later unnamed claims.
+	mustWriteFile(t, filename, strings.Replace(edited, "// PRECONDITION:", "// PRECONDITION positive-size:", 1))
+	want[1] = "positive-size"
+	checkIDs(filename, want)
+}
+
+func TestNamedClaimContinuationsAndInvalidBoundaries(t *testing.T) {
+	t.Parallel()
+	repoRoot := t.TempDir()
+	mustWriteFile(t, filepath.Join(repoRoot, "claims.go"), `package example
+
+// INVARIANT named: first line
+// continuation
+// POSTCONDITION:
+// second claim
+// ASSERTION point: third claim
+//
+// excluded after blank comment
+func Example() {}
+
+// INVARIANT empty:
+func Empty() {}
+
+func Boundary() {
+    // PRECONDITION before-invalid: valid claim
+    //postcondition invalid: ignored spelling
+    // must not be appended
+    // ASSERTION after-invalid: next valid claim
+}
+`)
+	result, err := Scan(repoRoot, repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ id, text string }{
+		{"named", "first line\ncontinuation"},
+		{"example-postcondition-1", "second claim"},
+		{"point", "third claim"},
+		{"before-invalid", "valid claim"},
+		{"after-invalid", "next valid claim"},
+	}
+	if len(result.Claims) != len(want) {
+		t.Fatalf("claims = %#v, want %d", result.Claims, len(want))
+	}
+	for index, expected := range want {
+		claim := result.Claims[index]
+		if claim.ID != expected.id || claim.Text != expected.text {
+			t.Errorf("claim %d = %#v, want %v", index, claim, expected)
+		}
+	}
+	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Message != "INVARIANT claim is empty" {
+		t.Fatalf("diagnostics = %#v, want one empty-claim warning", result.Diagnostics)
 	}
 }
 

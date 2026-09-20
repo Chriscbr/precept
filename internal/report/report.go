@@ -159,8 +159,7 @@ func writeSummary(writer io.Writer, summary Summary, style textStyle) error {
 // writeClaimHeading is shared by list and verify. An empty verdict produces a
 // discovery entry with the same identity and source location.
 func writeClaimHeading(writer io.Writer, claim discover.Claim, verdict string, style textStyle) error {
-	heading := style.bold(textsafe.SingleLine(displaySymbol(claim))) + " " +
-		style.color(ansiCyan, "["+textsafe.SingleLine(string(claim.Marker))+"]")
+	heading := claimHeading(claim, style)
 	if verdict != "" {
 		heading += "  " + verdict
 	}
@@ -169,6 +168,15 @@ func writeClaimHeading(writer io.Writer, claim discover.Claim, verdict string, s
 	}
 	location := fmt.Sprintf("%s:%d", textsafe.SingleLine(claim.File), claim.MarkerLine)
 	return writeLabeledValue(writer, style, "Source", style.gray(style.linkPath(claim.File, location)))
+}
+
+func claimHeading(claim discover.Claim, style textStyle) string {
+	heading := style.bold(textsafe.SingleLine(displaySymbol(claim))) + " " +
+		style.color(ansiCyan, "["+textsafe.SingleLine(string(claim.Marker))+"]")
+	if claim.ID != "" {
+		heading += " " + style.gray("("+textsafe.SingleLine(claim.ID)+")")
+	}
+	return heading
 }
 
 func outcomeStatus(outcome verify.Outcome) (mark, status, color string) {
@@ -385,6 +393,7 @@ type jsonDiagnostic struct {
 }
 
 type jsonClaim struct {
+	ID         string          `json:"id"`
 	Marker     discover.Marker `json:"marker"`
 	Text       string          `json:"text"`
 	Package    string          `json:"package"`
@@ -441,6 +450,7 @@ func makeJSONDocument(run Run) jsonDocument {
 		sessionID := strings.TrimSpace(outcome.SessionID)
 		jsonValue := jsonOutcome{
 			Claim: jsonClaim{
+				ID:         outcome.Claim.ID,
 				Marker:     outcome.Claim.Marker,
 				Text:       outcome.Claim.Text,
 				Package:    outcome.Claim.Package,

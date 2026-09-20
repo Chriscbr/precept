@@ -243,7 +243,7 @@ func (p *Progress) Observe(event verify.Event) error {
 			if !p.interactive {
 				_, status, _ := outcomeStatus(outcome)
 				p.write(p.errOut, "Completed %d of %d: %s %s (%s:%d)\n", len(p.completed), p.total, status,
-					textsafe.SingleLine(displaySymbol(outcome.Claim)), textsafe.SingleLine(outcome.Claim.File), outcome.Claim.MarkerLine)
+					claimHeading(outcome.Claim, textStyle{}), textsafe.SingleLine(outcome.Claim.File), outcome.Claim.MarkerLine)
 			}
 		} else {
 			p.record(writeTextOutcome(p.out, p.agent, outcome, p.outStyle, p.interactive))
@@ -369,8 +369,7 @@ func (p *Progress) verificationFrame(now time.Time, spinner string, limit int) [
 		active := p.active[index]
 		location := fmt.Sprintf("%s:%d", textsafe.SingleLine(active.claim.File), active.claim.MarkerLine)
 		lines = append(lines,
-			"  "+style.color(ansiCyan, "›")+" "+style.bold(textsafe.SingleLine(displaySymbol(active.claim)))+" "+
-				style.color(ansiCyan, "["+textsafe.SingleLine(string(active.claim.Marker))+"]"),
+			"  "+style.color(ansiCyan, "›")+" "+claimHeading(active.claim, style),
 			style.gray(fmt.Sprintf("    %s  running %s", style.linkPath(active.claim.File, location), elapsed(now.Sub(active.started)))),
 		)
 	}

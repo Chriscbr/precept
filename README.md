@@ -38,12 +38,12 @@ func (cache *Cache) Put(key string, value Value) {
 }
 ```
 
-Only `// INVARIANT:`, `// PRECONDITION:`, `// POSTCONDITION:`, and `// ASSERTION:` are accepted. These markers have the following meanings:
+The supported markers are `INVARIANT`, `PRECONDITION`, `POSTCONDITION`, and `ASSERTION`, optionally followed by a claim ID before the colon. These markers have the following meanings:
 
-- `// PRECONDITION:`: expected to hold on entry. Precept examines in-scope callers and callees to determine if the property holds.
-- `// POSTCONDITION:`: expected to hold on every normal return path, assuming the precondition holds.
-- `// ASSERTION:`: expected to hold at a particular point in the code.
-- `// INVARIANT:`: expected to hold on the boundaries of reachable paths (e.g. on the start and end of the function, method, or block).
+- `// PRECONDITION:`: describes a property that is expected to hold before a function is called, or before a block is entered.
+- `// POSTCONDITION:`: describes a property that is expected to hold whenever a function returns, or a block is exited, assuming that all preconditions hold.
+- `// ASSERTION:`: describes a property that is expected to hold at a particular point in the code.
+- `// INVARIANT:`: describes a property that is expected to hold on the boundaries of reachable paths (e.g. at the start and end of a function, method, or block).
 
 Every claim is associated with the most relevant source subject:
 
@@ -53,6 +53,17 @@ Every claim is associated with the most relevant source subject:
 - A field doc or trailing comment belongs to that named struct field.
 - A free-standing claim within a named type belongs to that type.
 - Any other claim belongs to its package, including free-standing package-level comments.
+
+Give a claim an ID by putting one ASCII space and the ID between the marker and the colon:
+
+```go
+// INVARIANT buffer-single-owner: the buffer has exactly one owner
+// POSTCONDITION buffer-closed: Close releases all resources
+```
+
+IDs are case-sensitive. They start with a letter or digit and may contain letters, digits, hyphens, underscores, and periods, with no whitespace. Claim IDs must be unique within each Go file; the same ID may be reused in different files.
+
+Unnamed claims will automatically receive an ID such as `newbuffer-precondition-1` or `buffer-close-postcondition-2`. Inserting or reordering claims of the same subject and type can change default ID, so it is recommended to give claims an explicit ID if this is important.
 
 Claims may span consecutive non-empty line comments:
 
@@ -64,7 +75,7 @@ Claims may span consecutive non-empty line comments:
 // this is not part of the claim because the blank comment ended it
 ```
 
-A second exact marker—`// INVARIANT:`, `// PRECONDITION:`, `// POSTCONDITION:`, or `// ASSERTION:`—starts a separate claim. Block comments (`/* ... */`) are ignored.
+Claim markers inside of block comments (`/* ... */`) are ignored.
 
 ## Discover claims
 
@@ -81,11 +92,11 @@ It assumes code is in a Git repository and resolves paths relative to the git pr
 The output uses the same claim header as `verify`, followed by its source location and full claim text:
 
 ```text
-example.Clamp [PRECONDITION]
+example.Clamp [PRECONDITION] (clamp-precondition-1)
   Source  example/clamp.go:3
   Claim   lo <= hi
 
-example.Clamp [POSTCONDITION]
+example.Clamp [POSTCONDITION] (clamp-postcondition-1)
   Source  example/clamp.go:4
   Claim   the result is within the inclusive range [lo, hi]
 
@@ -95,14 +106,16 @@ example.Clamp [POSTCONDITION]
 Use `precept list --compact` for an index without claim descriptions:
 
 ```text
-KIND           SYMBOL         SOURCE
-PRECONDITION   example.Clamp  example/clamp.go:3
-POSTCONDITION  example.Clamp  example/clamp.go:4
+ID                     KIND           SYMBOL         SOURCE
+clamp-precondition-1   PRECONDITION   example.Clamp  example/clamp.go:3
+clamp-postcondition-1  POSTCONDITION  example.Clamp  example/clamp.go:4
 
 2 claims in 1 file
 ```
 
 Use `precept list --json` for machine-readable output.
+
+If multiple claims in the same file share an ID, `precept list` will exit with code 2 and print each duplicate ID and its file on stderr.
 
 ## Verify claims
 
@@ -112,6 +125,15 @@ Verify all claims in a file-or-directory scope with a coding agent. Select the r
 precept verify --harness claude ./example/internal
 precept verify --harness codex --jobs 6 --timeout 15m ./example/api
 ```
+
+Use `--claim` to verify all claims matching an ID from `precept list` across the selected scope, or repeat it to select several IDs:
+
+```bash
+precept verify --harness codex --claim buffer-single-owner ./example
+precept verify --harness codex --claim newbuffer-precondition-1 --claim buffer-close-postcondition-2 ./example/buffer.go
+```
+
+If an ID is missing, `precept verify` will error immediately. Duplicate IDs within any Go file in the selected scope also cause an error before any claims are verified. Reusing an ID across different files is allowed (though discouraged).
 
 Optional model and reasoning-effort overrides are mapped to the selected CLI:
 
@@ -142,10 +164,10 @@ Verifying 2 claims in example
   Timeout        10m per claim
   Extra context  (none)
 
-example.Clamp [PRECONDITION]  ✓ HOLDS (1s)
+example.Clamp [PRECONDITION] (clamp-precondition-1)  ✓ HOLDS (1s)
   Source  example/clamp.go:11
 
-(*Cache).Get [INVARIANT]  ✗ VIOLATED (3s)
+(*Cache).Get [INVARIANT] (cache-get-invariant-1)  ✗ VIOLATED (3s)
   Source  example/cache.go:42
   Claim   Missing keys are never reported as cache hits.
   Reason  The zero value is reported as a hit.
@@ -203,14 +225,12 @@ go test ./...
 
 Here are some ideas for future features:
 
-- [ ] Add an `--changed` flag to the `list` and `verify` commands to only list or verify claims in which the claim or the subject (function, struct, etc.) has changed in the current git branch.
+- [ ] Add an `--changed` flag to the `list` and `verify` commands to only list or verify claims in which the claim or the code associated with the claim (function, struct, etc.) has changed in the current git branch.
 - [ ] Add an `--affected` flag to the `list` and `verify` commands to conservatively list or verify claims that could be affected by the changes in the current git branch, directly or by the transitive dependencies of the changed code. (It would be useful to explain why each claim was affected: "queue.Buffer selected because: ... (1) internal/queue/delivery.go:84 changed ... (2) Buffer.StartDelivery calls delivery.Start").
 - [ ] Build tooling for automatically running Precept in a CI pipeline / as a GitHub PR review bot.
 - [ ] Add a `prompt` or `inspect` command to view the prompt that will be sent to the agent.
 - [ ] Add a `compare` command to compare the JSON output of two verification runs for the purpose of identifying new violations, moved claims, agent verdict changes, etc.
 - [ ] Add a `resolve` command (and optional `--resolve` flag on `verify`) to automatically resolve claims that don't hold by suggesting fixes or resolutions based on the context of the codebase. The proposed resolutions could be categorized into `change-code`, `change-claim`, `clarify-claim`, `split-claim`, `move-claim`, `remove-claim`, `add-enforcement`, `add-context`, `defer-to-author`, `not-verifiable`, etc.
-- [ ] Support user-defined claim IDs (e.g. "// INVARIANT buffer-single-owner: ...") to give claims stable names for use in the `--claim` flag and in CLI outputs. Unnamed claims should be given a stable default name (e.g. "newbuffer-precondition-1", "buffer-close-postcondition-2", etc.) based on the position of the claim in the file and the claim type.
-- [ ] Add a `--claim` flag to the `verify` command to only verify a specific claim (may be repeated to verify multiple individual claims).
 - [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
 - [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
 - [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.

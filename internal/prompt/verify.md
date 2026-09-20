@@ -39,6 +39,8 @@ This is a static reasoning task. Do not modify files or create files anywhere in
 - `ASSERTION`: the claim is expected to hold at the marker's particular program point whenever execution reaches it.
 - `INVARIANT`: the claim is expected to hold at the boundaries of relevant reachable paths, such as the start and end of the function, method, block, type lifetime, or other subject described by the claim.
 
+`PRECONDITION` and `POSTCONDITION` claims are only valid if the source subject is a function or method.
+
 Use `error` when the marker is strictly incompatible with what the claim says and applying that marker's meaning would be misleading or nonsensical. Do not use `error` merely because the claim is false, difficult to prove, informally phrased, or uses a nearby category such as `INVARIANT` where `POSTCONDITION` would be more precise. In those cases, verify the strongest reasonable reading under the supplied marker.
 
 ## Reasoning procedure
