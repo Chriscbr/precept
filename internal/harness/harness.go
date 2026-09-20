@@ -166,7 +166,7 @@ type Runner interface {
 	Run(context.Context, Request) (RunResult, error)
 }
 
-// New constructs a runner for a supported agent name.
+// New constructs a runner for a supported harness name.
 func New(name string) (Runner, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "claude":
@@ -174,6 +174,6 @@ func New(name string) (Runner, error) {
 	case "codex":
 		return &codexRunner{executable: "codex"}, nil
 	default:
-		return nil, fmt.Errorf("unsupported agent %q (supported agents: claude, codex)", name)
+		return nil, fmt.Errorf("unsupported harness %q (supported harnesses: claude, codex)", name)
 	}
 }

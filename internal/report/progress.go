@@ -206,14 +206,14 @@ func writeSettings(writer io.Writer, scope string, total int, settings Settings,
 		timeout = fmt.Sprintf("%dm", settings.Timeout/time.Minute)
 	}
 	for _, field := range [][2]string{
-		{"Agent", textsafe.SingleLine(settings.Agent)},
+		{"Agent harness", textsafe.SingleLine(settings.Agent)},
 		{"Model", defaultValue(settings.Model)},
 		{"Effort", defaultValue(settings.Effort)},
 		{"Workers", fmt.Sprintf("up to %d", settings.Jobs)},
 		{"Timeout", timeout + " per claim"},
-		{"Context", context},
+		{"Extra context", context},
 	} {
-		if _, err := fmt.Fprintf(writer, "  %s%s\n", style.gray(fmt.Sprintf("%-12s", field[0])), field[1]); err != nil {
+		if _, err := fmt.Fprintf(writer, "  %s%s\n", style.gray(fmt.Sprintf("%-15s", field[0])), field[1]); err != nil {
 			return err
 		}
 	}

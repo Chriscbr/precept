@@ -24,7 +24,7 @@ func TestNew(t *testing.T) {
 	}{
 		{name: "claude", wantName: "claude"},
 		{name: " CODEX ", wantName: "codex"},
-		{name: "opencode", wantError: "supported agents: claude, codex"},
+		{name: "opencode", wantError: "supported harnesses: claude, codex"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

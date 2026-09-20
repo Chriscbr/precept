@@ -75,7 +75,7 @@ func (log *verificationLog) WriteRunStart(version, scopeArgument string, options
 	_, _ = fmt.Fprintf(&body, "precept_version: %s\n", textsafe.SingleLine(version))
 	_, _ = fmt.Fprintf(&body, "started_at: %s\n", startedAt.UTC().Format(time.RFC3339Nano))
 	_, _ = fmt.Fprintf(&body, "scope_argument: %s\n", textsafe.SingleLine(scopeArgument))
-	_, _ = fmt.Fprintf(&body, "agent: %s\n", textsafe.SingleLine(options.agent))
+	_, _ = fmt.Fprintf(&body, "harness: %s\n", textsafe.SingleLine(options.harness))
 	_, _ = fmt.Fprintf(&body, "model: %s\n", textsafe.SingleLine(options.model))
 	_, _ = fmt.Fprintf(&body, "effort: %s\n", textsafe.SingleLine(options.effort))
 	_, _ = fmt.Fprintf(&body, "jobs: %d\n", options.jobs)

@@ -106,25 +106,25 @@ Use `precept list --json` for machine-readable output.
 
 ## Verify claims
 
-Verify all claims in a file-or-directory scope with a coding agent:
+Verify all claims in a file-or-directory scope with a coding agent. Select the required agent harness with `--harness claude` or `--harness codex`:
 
 ```bash
-precept verify --agent claude ./example/internal
-precept verify --agent codex --jobs 6 --timeout 15m ./example/api
+precept verify --harness claude ./example/internal
+precept verify --harness codex --jobs 6 --timeout 15m ./example/api
 ```
 
 Optional model and reasoning-effort overrides are mapped to the selected CLI:
 
 ```bash
-precept verify --agent claude --model sonnet --effort high ./example
-precept verify --agent codex --model gpt-5.4 --effort high ./example
+precept verify --harness claude --model sonnet --effort high ./example
+precept verify --harness codex --model gpt-5.4 --effort high ./example
 ```
 
 Append context to every verification run:
 
 ```bash
 precept verify \
-  --agent codex \
+  --harness codex \
   --append-prompt 'Treat database rows as potentially stale unless the code proves otherwise.' \
   --append-prompt-file /tmp/precept-verifier-context.md \
   ./example
@@ -135,12 +135,12 @@ Precept prints claim's result as soon as its agent finishes:
 ```text
 Verifying 2 claims in example
 
-  Agent       codex
-  Model       (default)
-  Effort      (default)
-  Workers     up to 4
-  Timeout     10m per claim
-  Context     (none)
+  Agent harness  codex
+  Model          (default)
+  Effort         (default)
+  Workers        up to 4
+  Timeout        10m per claim
+  Extra context  (none)
 
 example.Clamp [PRECONDITION]  ✓ HOLDS (1s)
   Source  example/clamp.go:11
@@ -216,3 +216,5 @@ Here are some ideas for future features:
 - [ ] Support Rust as an additional programming language.
 - [ ] Support Python as an additional programming language.
 - [ ] Support TypeScript as an additional programming language.
+- [ ] Support opencode as an additional agent harness.
+- [ ] Support pi as an additional agent harness.

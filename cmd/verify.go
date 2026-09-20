@@ -22,7 +22,7 @@ const (
 )
 
 type verifyFlags struct {
-	agent             string
+	harness           string
 	model             string
 	effort            string
 	jobs              int
@@ -45,9 +45,9 @@ func newVerifyCommand(version string, state *executionState) *cobra.Command {
 	}
 
 	flags := command.Flags()
-	flags.StringVar(&options.agent, "agent", "", "coding-agent harness: claude or codex (required)")
-	flags.StringVar(&options.model, "model", "", "model override passed to the selected agent")
-	flags.StringVar(&options.effort, "effort", "", "reasoning-effort override passed to the selected agent")
+	flags.StringVar(&options.harness, "harness", "", "agent harness: claude or codex (required)")
+	flags.StringVar(&options.model, "model", "", "model override passed to the selected harness")
+	flags.StringVar(&options.effort, "effort", "", "reasoning-effort override passed to the selected harness")
 	flags.IntVar(&options.jobs, "jobs", defaultJobs, "maximum concurrent agent subprocesses")
 	flags.DurationVar(&options.timeout, "timeout", defaultTimeout, "timeout for each claim")
 	flags.StringArrayVar(&options.appendPrompt, "append-prompt", nil, "additional context appended to every verifier (repeatable)")
@@ -147,7 +147,7 @@ func (invocation *verifyInvocation) selectRunner() {
 	if invocation.err != nil {
 		return
 	}
-	invocation.runner, invocation.err = harness.New(invocation.options.agent)
+	invocation.runner, invocation.err = harness.New(invocation.options.harness)
 	invocation.wrapFailure()
 }
 
@@ -325,8 +325,8 @@ func promoteLogFailure(commandErr, logErr error) error {
 }
 
 func validateVerifyFlags(options verifyFlags) error {
-	if options.agent == "" {
-		return fmt.Errorf("--agent is required (want claude or codex)")
+	if options.harness == "" {
+		return fmt.Errorf("--harness is required (want claude or codex)")
 	}
 	if options.jobs <= 0 {
 		return fmt.Errorf("--jobs must be positive")

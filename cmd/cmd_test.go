@@ -75,7 +75,7 @@ exit 9
 	mustWriteFile(t, filepath.Join(binDirectory, "codex"), fakeCodex, 0o755)
 	t.Setenv("PATH", binDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	stdout, stderr, exitCode, logPath := executeCLI(t, []string{"verify", "--agent", "codex", "--json"})
+	stdout, stderr, exitCode, logPath := executeCLI(t, []string{"verify", "--harness", "codex", "--json"})
 	if exitCode != 0 {
 		t.Fatalf("precept verify without scope exit code = %d", exitCode)
 	}
@@ -106,7 +106,7 @@ func TestVerificationLogPathIsLastAfterOperationalError(t *testing.T) {
 	command, state := newRootCommand("0.1.0")
 	command.SetArgs([]string{
 		"verify",
-		"--agent", "codex",
+		"--harness", "codex",
 		"--append-prompt-file", missingContext,
 	})
 	var stdout bytes.Buffer
@@ -132,7 +132,7 @@ func TestVerifyMissingAgentFailsBeforeScanningOrLoadingContext(t *testing.T) {
 	for _, agent := range []string{"codex", "claude"} {
 		t.Run(agent, func(t *testing.T) {
 			stdout, stderr, exitCode, logPath := executeCLI(t, []string{
-				"verify", "--agent", agent, "--json",
+				"verify", "--harness", agent, "--json",
 				"--append-prompt-file", filepath.Join(t.TempDir(), "missing-context.md"),
 				filepath.Join(t.TempDir(), "missing-scope"),
 			})
@@ -174,7 +174,7 @@ kill -TERM $$
 	t.Setenv("PRECEPT_FAKE_CALL_LOG", callLog)
 
 	for _, jsonOutput := range []bool{false, true} {
-		arguments := []string{"verify", "--agent", "codex", "--jobs", "2", repository}
+		arguments := []string{"verify", "--harness", "codex", "--jobs", "2", repository}
 		if jsonOutput {
 			arguments = append(arguments, "--json")
 		}
@@ -439,7 +439,7 @@ func TestCommandsExplainFileOrDirectoryArgument(t *testing.T) {
 func TestValidateVerifyFlags(t *testing.T) {
 	t.Parallel()
 
-	valid := verifyFlags{agent: "codex", jobs: 1, timeout: time.Second}
+	valid := verifyFlags{harness: "codex", jobs: 1, timeout: time.Second}
 	if err := validateVerifyFlags(valid); err != nil {
 		t.Fatalf("validateVerifyFlags(valid) = %v", err)
 	}
@@ -449,7 +449,7 @@ func TestValidateVerifyFlags(t *testing.T) {
 		mutate  func(*verifyFlags)
 		message string
 	}{
-		{name: "missing agent", mutate: func(flags *verifyFlags) { flags.agent = "" }, message: "--agent"},
+		{name: "missing harness", mutate: func(flags *verifyFlags) { flags.harness = "" }, message: "--harness"},
 		{name: "zero jobs", mutate: func(flags *verifyFlags) { flags.jobs = 0 }, message: "--jobs"},
 		{name: "zero timeout", mutate: func(flags *verifyFlags) { flags.timeout = 0 }, message: "--timeout"},
 	}
@@ -550,7 +550,7 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{
 
 	stdout, stderr, exitCode, logPath := executeCLI(t, []string{
 		"verify",
-		"--agent", "codex",
+		"--harness", "codex",
 		"--jobs", "2",
 		"--json",
 		"--append-prompt", "shared verifier context",
@@ -615,7 +615,7 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{
 	if err != nil {
 		t.Fatalf("read verification log: %v", err)
 	}
-	for _, text := range []string{"=== run ===", "=== discovery ===", "session_id: fake-session", "codex resume fake-session", "conversation_path: " + conversationPath, "=== normalized report ==="} {
+	for _, text := range []string{"=== run ===", "harness: codex", "=== discovery ===", "session_id: fake-session", "codex resume fake-session", "conversation_path: " + conversationPath, "=== normalized report ==="} {
 		if !strings.Contains(string(logContents), text) {
 			t.Errorf("verification log does not contain %q", text)
 		}
