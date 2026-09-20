@@ -35,18 +35,28 @@ type verifyFlags struct {
 
 func newVerifyCommand(version string, state *executionState) *cobra.Command {
 	options := verifyFlags{}
+	var interactive bool
 	command := &cobra.Command{
 		Use:   "verify [file-or-directory]",
 		Short: "Check source-condition claims using local coding agents.",
-		Long:  "Check INVARIANT, PRECONDITION, POSTCONDITION, and ASSERTION claims using local coding agents.\n\nIf file-or-directory is omitted, precept scans the current working directory.",
+		Long:  "Check INVARIANT, PRECONDITION, POSTCONDITION, and ASSERTION claims using local coding agents.\n\nIf file-or-directory is omitted, precept scans the current working directory.\nWith no flags and terminal input, precept interactively prompts for options.\nUse --interactive to prompt for options not supplied through flags.\nOutside interactive mode, --agent is required.",
 		Args:  optionalScopeArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVerify(cmd, version, scopeOrCurrent(args), options, state)
+			selected := options
+			if interactive || (cmd.Flags().NFlag() == 0 && isTerminalInput(cmd.InOrStdin())) {
+				var err error
+				selected, err = promptVerifyOptions(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), selected, cmd.Flags().Changed)
+				if err != nil {
+					return operationalError(err)
+				}
+			}
+			return runVerify(cmd, version, scopeOrCurrent(args), selected, state)
 		},
 	}
 
 	flags := command.Flags()
-	flags.StringVar(&options.agent, "agent", "", "coding-agent harness: claude or codex (required)")
+	flags.BoolVar(&interactive, "interactive", false, "prompt for options not explicitly supplied, even when other flags are set")
+	flags.StringVar(&options.agent, "agent", "", "coding agent harness claude, codex")
 	flags.StringVar(&options.model, "model", "", "model override passed to the selected agent")
 	flags.StringVar(&options.effort, "effort", "", "reasoning-effort override passed to the selected agent")
 	flags.IntVar(&options.jobs, "jobs", defaultJobs, "maximum concurrent agent subprocesses")
