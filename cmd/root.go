@@ -94,7 +94,7 @@ func executeRoot(ctx context.Context, root *cobra.Command, state *executionState
 	}
 
 	if state != nil && state.verificationLogPath != "" {
-		if _, writeErr := fmt.Fprintf(root.ErrOrStderr(), "Verification log: %s\n", state.verificationLogPath); writeErr != nil {
+		if _, writeErr := fmt.Fprintf(root.ErrOrStderr(), "Log: %s\n", state.verificationLogPath); writeErr != nil {
 			exitCode = 2
 		}
 	}

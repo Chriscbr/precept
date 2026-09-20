@@ -663,14 +663,14 @@ func executeCLI(t *testing.T, arguments []string) (string, string, int, string) 
 func assertFinalLogLine(t *testing.T, stderr, logPath string) {
 	t.Helper()
 	if logPath == "" {
-		t.Fatal("verification log path is empty")
+		t.Fatal("log path is empty")
 	}
-	line := "Verification log: " + logPath + "\n"
+	line := "Log: " + logPath + "\n"
 	if count := strings.Count(stderr, line); count != 1 {
-		t.Fatalf("verification log line count = %d, want 1; stderr:\n%s", count, stderr)
+		t.Fatalf("log line count = %d, want 1; stderr:\n%s", count, stderr)
 	}
 	if !strings.HasSuffix(stderr, line) {
-		t.Fatalf("verification log is not the final output line:\n%s", stderr)
+		t.Fatalf("log is not the final output line:\n%s", stderr)
 	}
 }
 
