@@ -104,29 +104,30 @@ Use `precept list --json` for machine-readable output.
 
 ## Verify claims
 
-Verify all claims in a file-or-directory scope with a coding agent:
+Verify each claim in a file or directory with a dedicated coding agent by using `precept verify`:
 
 ```bash
 precept verify --agent claude ./example/internal
-precept verify --agent codex --jobs 6 --timeout 15m ./example/api
+precept verify \
+  --agent codex \
+  --model gpt-5.4 \
+  --effort high \
+  --jobs 6 \
+  --timeout 15m \
+  ./example/api
 ```
 
-Optional model and reasoning-effort overrides are mapped to the selected CLI:
-
-```bash
-precept verify --agent claude --model sonnet --effort high ./example
-precept verify --agent codex --model gpt-5.4 --effort high ./example
-```
-
-Append context to every verification run:
+Additional context or instructions can be appended to every verification run by using the `--append-prompt` and `--append-prompt-file` flags:
 
 ```bash
 precept verify \
   --agent codex \
-  --append-prompt 'Treat database rows as potentially stale unless the code proves otherwise.' \
+  --append-prompt 'Ignore any code referring to legacy_db since it is deprecated.' \
   --append-prompt-file /tmp/precept-verifier-context.md \
   ./example
 ```
+
+If you run the command without any flags, Precept prompts you for all of the above options interactively so you don't need to remember them.
 
 When the verification run is complete, Precept prints the results:
 
@@ -194,7 +195,5 @@ Here are some ideas for future features:
 - [ ] Support user-defined claim IDs (e.g. "// INVARIANT buffer-single-owner: ...") to give claims stable names for use in the `--claim` flag and in CLI outputs. Unnamed claims should be given a stable default name (e.g. "newbuffer-precondition-1", "buffer-close-postcondition-2", etc.) based on the position of the claim in the file and the claim type.
 - [ ] Add a `--claim` flag to the `verify` command to only verify a specific claim (may be repeated to verify multiple individual claims).
 - [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
-- [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
-- [x] Improve the readability of the `list` command's output.
 - [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.
 - [ ] Support programming languages other than Go.
