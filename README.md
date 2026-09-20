@@ -82,11 +82,11 @@ The output uses the same claim header as `verify`, followed by its source locati
 
 ```text
 example.Clamp [PRECONDITION]
-  example/clamp.go:3
+  Source  example/clamp.go:3
   Claim   lo <= hi
 
 example.Clamp [POSTCONDITION]
-  example/clamp.go:4
+  Source  example/clamp.go:4
   Claim   the result is within the inclusive range [lo, hi]
 
 2 claims in 1 file
@@ -130,7 +130,7 @@ precept verify \
   ./example
 ```
 
-Precept prints the invocation settings once, then each claim's result as soon as its agent finishes. Results appear in completion order, so a slow claim does not hold up other results. For example:
+Precept prints claim's result as soon as its agent finishes:
 
 ```text
 Verifying 2 claims in example
@@ -143,18 +143,10 @@ Verifying 2 claims in example
   Context     (none)
 
 example.Clamp [PRECONDITION]  ✓ HOLDS (1s)
-  example/clamp.go:11
-  Claim   The lower bound does not exceed the upper bound.
-  Reason  Every caller establishes lo <= hi before calling.
-
-  Evidence
-    example/caller.go:8-10
-    The caller checks both bounds before calling.
-
-  Resume  codex resume <clamp-session>
+  Source  example/clamp.go:11
 
 (*Cache).Get [INVARIANT]  ✗ VIOLATED (3s)
-  example/cache.go:42
+  Source  example/cache.go:42
   Claim   Missing keys are never reported as cache hits.
   Reason  The zero value is reported as a hit.
 
@@ -169,19 +161,12 @@ example.Clamp [PRECONDITION]  ✓ HOLDS (1s)
 
 2 claims: 1 holds, 1 violated, 0 inconclusive, 0 errors
 Finished in 3s. Exit code: 1.
+Log file: /tmp/precept-verification-example-20260920T123456Z-00000.log
 ```
 
-Each result header includes that claim's verification duration, excluding time waiting for a worker, in gray parentheses. Durations use forms such as `18s`, `1m12s`, and `<1s` for checks that finish in under a second.
+When `precept verify` is run in an interactive shell, the output is condensed to only show detailed output for failed claims. Full details about each are still available in the generated log file.
 
-`Model` and `Effort` show `(default)` when no override was passed to the selected CLI; Precept does not infer the model or effort that the agent will choose. These defaults are gray in a color terminal. `Context` shows the number of non-empty text prompts and files appended to each verification prompt, without printing their contents.
-
-In an interactive terminal, `list` and `verify` show a gray scan spinner only if discovery takes longer than 200 ms. It disappears when discovery finishes; warnings remain visible. During verification, a live footer shows completed, active, and queued checks, elapsed time, and active claim locations. Completed claim blocks stay in scrollback. The footer disappears before the final summary, and interrupted runs preserve completed results and report how many checks remain unfinished. An empty scope produces a short summary without starting an agent.
-
-Results go to stdout; progress, discovery warnings, operational diagnostics, and the final verification-log path go to stderr. Each stream detects its own terminal status. Build logs and other non-terminal streams use plain output without cursor movement: discovery prints a start and completion line, and long scans or verification runs print a heartbeat after 30 seconds without other output. `NO_COLOR` disables color, and `TERM=dumb` also disables animation.
-
-Use `precept verify --json` for one final JSON document on stdout. Its outcomes remain in source discovery order even when checks finish out of order. Progress stays on stderr. The JSON `agent.version` field is empty because Precept checks executable availability without launching a `--version` probe.
-
-If the selected agent executable is missing, `verify` fails before scanning or loading appended context. Once verification begins, an agent process failure, crash, timeout, or invalid response becomes `ERROR` for that claim while other claims continue.
+Use `precept verify --json` to generate a structured JSON document to stdout when verification completes. Its outcomes remain in source discovery order even when checks finish out of order. Progress stays on stderr.
 
 See `precept verify --help` for all options.
 

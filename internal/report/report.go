@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/Chriscbr/precept/internal/textsafe"
 	"github.com/Chriscbr/precept/internal/verify"
 	"github.com/charmbracelet/x/ansi"
-	"golang.org/x/term"
 )
 
 // JSONSchemaVersion changes when the JSON document contract changes incompatibly.
@@ -41,6 +39,7 @@ type Agent struct {
 // Run contains all data needed to render one verification invocation.
 type Run struct {
 	PreceptVersion  string
+	RepositoryRoot  string
 	Scope           string
 	Agent           Agent
 	StartedAt       time.Time
@@ -106,14 +105,14 @@ func Write(writer io.Writer, format Format, run Run) error {
 	}
 }
 
-// WriteText renders the concise human-readable report. ANSI styling is enabled
-// only for terminal writers when the user's environment permits color.
+// WriteText renders the human-readable report with file links for interactive
+// terminal writers and color when the user's environment permits it.
 func WriteText(writer io.Writer, run Run) error {
-	return writeText(writer, run, textStyle{enabled: shouldStyle(writer, os.LookupEnv)})
+	return writeText(writer, run, newTextStyle(writer, run.RepositoryRoot))
 }
 
 func writeText(writer io.Writer, run Run, style textStyle) error {
-	if err := writeDiagnostics(writer, run.Diagnostics); err != nil {
+	if err := writeDiagnostics(writer, run.Diagnostics, style); err != nil {
 		return err
 	}
 	if len(run.Diagnostics) > 0 && len(run.Outcomes) > 0 {
@@ -122,7 +121,7 @@ func writeText(writer io.Writer, run Run, style textStyle) error {
 		}
 	}
 	for _, outcome := range run.Outcomes {
-		if err := writeTextOutcome(writer, run.Agent.Name, outcome, style); err != nil {
+		if err := writeTextOutcome(writer, run.Agent.Name, outcome, style, false); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(writer); err != nil {
@@ -132,12 +131,13 @@ func writeText(writer io.Writer, run Run, style textStyle) error {
 	return writeSummary(writer, Summarize(run.Outcomes), style)
 }
 
-func writeDiagnostics(writer io.Writer, diagnostics []discover.Diagnostic) error {
+func writeDiagnostics(writer io.Writer, diagnostics []discover.Diagnostic, style textStyle) error {
 	for _, diagnostic := range diagnostics {
 		location := textsafe.SingleLine(diagnostic.File)
 		if diagnostic.Line > 0 {
 			location = fmt.Sprintf("%s:%d", location, diagnostic.Line)
 		}
+		location = style.linkPath(diagnostic.File, location)
 		if _, err := fmt.Fprintf(writer, "warning %s: %s\n", location, textsafe.SingleLine(diagnostic.Message)); err != nil {
 			return fmt.Errorf("write diagnostic: %w", err)
 		}
@@ -157,7 +157,7 @@ func writeSummary(writer io.Writer, summary Summary, style textStyle) error {
 }
 
 // writeClaimHeading is shared by list and verify. An empty verdict produces a
-// discovery entry with the same identity, source location, and claim text.
+// discovery entry with the same identity and source location.
 func writeClaimHeading(writer io.Writer, claim discover.Claim, verdict string, style textStyle) error {
 	heading := style.bold(textsafe.SingleLine(displaySymbol(claim))) + " " +
 		style.color(ansiCyan, "["+textsafe.SingleLine(string(claim.Marker))+"]")
@@ -168,10 +168,7 @@ func writeClaimHeading(writer io.Writer, claim discover.Claim, verdict string, s
 		return err
 	}
 	location := fmt.Sprintf("%s:%d", textsafe.SingleLine(claim.File), claim.MarkerLine)
-	if _, err := fmt.Fprintln(writer, "  "+style.gray(location)); err != nil {
-		return err
-	}
-	return writeLabeledValue(writer, style, "Claim", textsafe.Sanitize(claim.Text))
+	return writeLabeledValue(writer, style, "Source", style.gray(style.linkPath(claim.File, location)))
 }
 
 func outcomeStatus(outcome verify.Outcome) (mark, status, color string) {
@@ -190,10 +187,16 @@ func outcomeStatus(outcome verify.Outcome) (mark, status, color string) {
 	}
 }
 
-func writeTextOutcome(writer io.Writer, agentName string, outcome verify.Outcome, style textStyle) error {
+func writeTextOutcome(writer io.Writer, agentName string, outcome verify.Outcome, style textStyle, compactHolds bool) error {
 	mark, status, color := outcomeStatus(outcome)
 	verdict := style.color(color, mark+" "+status) + " " + style.gray("("+elapsed(outcome.Duration)+")")
 	if err := writeClaimHeading(writer, outcome.Claim, verdict, style); err != nil {
+		return err
+	}
+	if compactHolds && status == "HOLDS" {
+		return nil
+	}
+	if err := writeLabeledValue(writer, style, "Claim", textsafe.Sanitize(outcome.Claim.Text)); err != nil {
 		return err
 	}
 	reason := operationalError(outcome)
@@ -222,6 +225,7 @@ func writeTextOutcome(writer io.Writer, agentName string, outcome verify.Outcome
 			if evidence.EndLine != evidence.StartLine {
 				location += fmt.Sprintf("-%d", evidence.EndLine)
 			}
+			location = style.linkPath(evidence.File, location)
 			if _, err := fmt.Fprintln(writer, "    "+style.gray(location)); err != nil {
 				return err
 			}
@@ -283,7 +287,9 @@ const (
 )
 
 type textStyle struct {
-	enabled bool
+	enabled        bool
+	hyperlinks     bool
+	repositoryRoot string
 }
 
 func (style textStyle) bold(value string) string {
@@ -309,8 +315,7 @@ func shouldStyle(writer io.Writer, lookupEnv func(string) (string, bool)) bool {
 	if !colorEnvironmentAllows(lookupEnv) {
 		return false
 	}
-	output, ok := writer.(fileDescriptorWriter)
-	return ok && term.IsTerminal(int(output.Fd()))
+	return isInteractiveTerminal(writer, lookupEnv)
 }
 
 func colorEnvironmentAllows(lookupEnv func(string) (string, bool)) bool {

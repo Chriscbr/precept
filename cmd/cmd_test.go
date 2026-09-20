@@ -256,7 +256,7 @@ func Other() {}
 		{
 			name: "text",
 			args: []string{"list", fixturePath},
-			want: "fixture.Example [INVARIANT]\n  fixture.go:3\n  Claim   always returns one\n\n1 claim in 1 file\n",
+			want: "fixture.Example [INVARIANT]\n  Source  fixture.go:3\n  Claim   always returns one\n\n1 claim in 1 file\n",
 		},
 		{
 			name: "compact",

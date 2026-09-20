@@ -9,8 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/spf13/cobra"
+	"github.com/Chriscbr/precept/internal/report"
 	"github.com/Chriscbr/precept/internal/textsafe"
+	"github.com/spf13/cobra"
 )
 
 type exitError struct {
@@ -94,7 +95,7 @@ func executeRoot(ctx context.Context, root *cobra.Command, state *executionState
 	}
 
 	if state != nil && state.verificationLogPath != "" {
-		if _, writeErr := fmt.Fprintf(root.ErrOrStderr(), "Log: %s\n", state.verificationLogPath); writeErr != nil {
+		if _, writeErr := fmt.Fprintf(root.ErrOrStderr(), "Log: %s\n", report.FileLink(root.ErrOrStderr(), state.verificationLogPath)); writeErr != nil {
 			exitCode = 2
 		}
 	}

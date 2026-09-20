@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +51,7 @@ type Progress struct {
 	size                              func() (int, int)
 	started, phaseStarted, lastOutput time.Time
 	phase, scope, agent               string
+	scanPath                          string
 	scanVisible                       bool
 	total, canceled                   int
 	active                            map[int]activeClaim
@@ -65,12 +67,12 @@ func newProgress(out, errOut io.Writer, started time.Time, jsonOutput bool) *Pro
 	p := &Progress{
 		out: out, errOut: errOut, started: started, lastOutput: started,
 		json: jsonOutput, active: make(map[int]activeClaim),
-		outStyle: textStyle{enabled: shouldStyle(out, os.LookupEnv)},
-		errStyle: textStyle{enabled: shouldStyle(errOut, os.LookupEnv)},
-		size:     func() (int, int) { return 80, 24 },
+		outStyle:    newTextStyle(out, ""),
+		errStyle:    newTextStyle(errOut, ""),
+		interactive: isInteractiveTerminal(errOut, os.LookupEnv),
+		size:        func() (int, int) { return 80, 24 },
 	}
 	if fd, ok := errOut.(fileDescriptorWriter); ok {
-		p.interactive = term.IsTerminal(int(fd.Fd())) && !strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb")
 		p.size = func() (int, int) {
 			width, height, err := term.GetSize(int(fd.Fd()))
 			if err != nil || width < 2 || height < 2 {
@@ -80,6 +82,14 @@ func newProgress(out, errOut io.Writer, started time.Time, jsonOutput bool) *Pro
 		}
 	}
 	return p
+}
+
+// SetRepositoryRoot resolves links for discovered claims and evidence relative
+// to the scanned repository, which may differ from the working directory.
+func (p *Progress) SetRepositoryRoot(root string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.outStyle.repositoryRoot, p.errStyle.repositoryRoot = root, root
 }
 
 // NewProgress starts a bounded refresh loop. Call Close on every exit path.
@@ -113,7 +123,7 @@ func (p *Progress) Close() error {
 		defer p.mu.Unlock()
 		p.clearFrame()
 		if p.phase == "scan" && p.interactive && p.scanVisible {
-			p.write(p.errOut, "Scanning for claims in %s\n", textsafe.SingleLine(p.scope))
+			p.write(p.errOut, "Scanning for claims in %s\n", p.errStyle.linkPath(p.scanPath, textsafe.SingleLine(p.scope)))
 		}
 		p.phase = ""
 	})
@@ -126,6 +136,7 @@ func (p *Progress) StartScan(scope string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.scope, p.phase, p.phaseStarted = scope, "scan", time.Now()
+	p.scanPath, _ = filepath.Abs(scope)
 	p.scanVisible = false
 	if !p.interactive {
 		p.write(p.errOut, "Scanning for claims in %s\n", textsafe.SingleLine(scope))
@@ -147,7 +158,7 @@ func (p *Progress) EndScan(result discover.Result) error {
 	}
 	p.phase = ""
 	if p.err == nil {
-		p.record(writeDiagnostics(p.errOut, result.Diagnostics))
+		p.record(writeDiagnostics(p.errOut, result.Diagnostics, p.errStyle))
 	}
 	return p.err
 }
@@ -158,10 +169,12 @@ func (p *Progress) StartVerification(scope string, total int, settings Settings)
 	p.scope, p.total, p.agent = scope, total, settings.Agent
 	if total == 0 {
 		writer := p.out
+		style := p.outStyle
 		if p.json {
 			writer = p.errOut
+			style = p.errStyle
 		}
-		p.write(writer, "No claims found in %s\n", textsafe.SingleLine(scope))
+		p.write(writer, "No claims found in %s\n", style.linkPath(scope, textsafe.SingleLine(scope)))
 		return p.err
 	}
 	if !p.json {
@@ -175,7 +188,7 @@ func (p *Progress) StartVerification(scope string, total int, settings Settings)
 }
 
 func writeSettings(writer io.Writer, scope string, total int, settings Settings, style textStyle) error {
-	if _, err := fmt.Fprintf(writer, "%s\n\n", style.bold(fmt.Sprintf("Verifying %d %s in %s", total, plural(total, "claim", "claims"), textsafe.SingleLine(scope)))); err != nil {
+	if _, err := fmt.Fprintf(writer, "%s\n\n", style.bold(fmt.Sprintf("Verifying %d %s in %s", total, plural(total, "claim", "claims"), style.linkPath(scope, textsafe.SingleLine(scope))))); err != nil {
 		return err
 	}
 	context := style.gray("(none)")
@@ -233,7 +246,7 @@ func (p *Progress) Observe(event verify.Event) error {
 					textsafe.SingleLine(displaySymbol(outcome.Claim)), textsafe.SingleLine(outcome.Claim.File), outcome.Claim.MarkerLine)
 			}
 		} else {
-			p.record(writeTextOutcome(p.out, p.agent, outcome, p.outStyle))
+			p.record(writeTextOutcome(p.out, p.agent, outcome, p.outStyle, p.interactive))
 			p.write(p.out, "\n")
 		}
 	}
@@ -305,7 +318,7 @@ func (p *Progress) render(now time.Time) {
 	p.step++
 	var lines []string
 	if p.phase == "scan" {
-		lines = []string{p.errStyle.gray(fmt.Sprintf("%s Scanning for claims in %s  %s", spinner, textsafe.SingleLine(p.scope), elapsed(now.Sub(p.phaseStarted))))}
+		lines = []string{p.errStyle.gray(fmt.Sprintf("%s Scanning for claims in %s  %s", spinner, p.errStyle.linkPath(p.scanPath, textsafe.SingleLine(p.scope)), elapsed(now.Sub(p.phaseStarted))))}
 	} else if p.phase == "verify" {
 		lines = p.verificationFrame(now, spinner, max(1, height-1))
 	}
@@ -354,10 +367,11 @@ func (p *Progress) verificationFrame(now time.Time, spinner string, limit int) [
 	}
 	for _, index := range indices[:shown] {
 		active := p.active[index]
+		location := fmt.Sprintf("%s:%d", textsafe.SingleLine(active.claim.File), active.claim.MarkerLine)
 		lines = append(lines,
 			"  "+style.color(ansiCyan, "›")+" "+style.bold(textsafe.SingleLine(displaySymbol(active.claim)))+" "+
 				style.color(ansiCyan, "["+textsafe.SingleLine(string(active.claim.Marker))+"]"),
-			style.gray(fmt.Sprintf("    %s:%d  running %s", textsafe.SingleLine(active.claim.File), active.claim.MarkerLine, elapsed(now.Sub(active.started)))),
+			style.gray(fmt.Sprintf("    %s  running %s", style.linkPath(active.claim.File, location), elapsed(now.Sub(active.started)))),
 		)
 	}
 	if shown < len(indices) && len(lines) < limit-1 {

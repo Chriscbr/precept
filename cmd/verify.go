@@ -172,6 +172,9 @@ func (invocation *verifyInvocation) resolveScope() {
 	}
 	invocation.scope, invocation.err = resolveScope(invocation.command.Context(), invocation.scopeArgument)
 	invocation.wrapFailure()
+	if invocation.err == nil {
+		invocation.display.SetRepositoryRoot(invocation.scope.repositoryRoot)
+	}
 }
 
 func (invocation *verifyInvocation) discoverClaims() {
@@ -260,6 +263,7 @@ func (invocation *verifyInvocation) buildReport() {
 	}
 	invocation.report = report.Run{
 		PreceptVersion: invocation.version,
+		RepositoryRoot: invocation.scope.repositoryRoot,
 		Scope:          invocation.scope.relativePath,
 		Agent: report.Agent{
 			Name:    invocation.info.Name,

@@ -3,7 +3,6 @@ package report
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/Chriscbr/precept/internal/discover"
@@ -14,8 +13,8 @@ import (
 // WriteListText renders discovered claims with the same symbol formatting and
 // terminal styling policy as verification reports. Compact output lists only
 // claim types, symbols, and source locations.
-func WriteListText(writer io.Writer, claims []discover.Claim, compact bool) error {
-	style := textStyle{enabled: shouldStyle(writer, os.LookupEnv)}
+func WriteListText(writer io.Writer, repositoryRoot string, claims []discover.Claim, compact bool) error {
+	style := newTextStyle(writer, repositoryRoot)
 	var err error
 	if compact {
 		err = writeCompactClaims(writer, claims, style)
@@ -48,6 +47,9 @@ func writeListClaims(writer io.Writer, claims []discover.Claim, style textStyle)
 		if err := writeClaimHeading(writer, claim, "", style); err != nil {
 			return fmt.Errorf("write claim: %w", err)
 		}
+		if err := writeLabeledValue(writer, style, "Claim", textsafe.Sanitize(claim.Text)); err != nil {
+			return fmt.Errorf("write claim: %w", err)
+		}
 		if _, err := io.WriteString(writer, "\n"); err != nil {
 			return fmt.Errorf("write claim separator: %w", err)
 		}
@@ -73,6 +75,7 @@ func writeCompactClaims(writer io.Writer, claims []discover.Claim, style textSty
 		marker := padColumn(textsafe.SingleLine(string(claim.Marker)), markerWidth)
 		symbol := padColumn(textsafe.SingleLine(displaySymbol(claim)), symbolWidth)
 		location := fmt.Sprintf("%s:%d", textsafe.SingleLine(claim.File), claim.MarkerLine)
+		location = style.linkPath(claim.File, location)
 		if _, err := fmt.Fprintf(writer, "%s  %s  %s\n",
 			style.color(ansiCyan, marker), style.bold(symbol), style.gray(location),
 		); err != nil {

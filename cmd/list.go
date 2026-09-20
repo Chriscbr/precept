@@ -40,6 +40,7 @@ func newListCommand() *cobra.Command {
 			if err != nil {
 				return operationalError(err)
 			}
+			display.SetRepositoryRoot(scope.repositoryRoot)
 			result, err := discover.ScanContext(cmd.Context(), scope.repositoryRoot, scope.absolutePath)
 			if err != nil {
 				return operationalError(fmt.Errorf("discover claims: %w", err))
@@ -63,7 +64,7 @@ func newListCommand() *cobra.Command {
 				return nil
 			}
 
-			if err := report.WriteListText(cmd.OutOrStdout(), result.Claims, compact); err != nil {
+			if err := report.WriteListText(cmd.OutOrStdout(), scope.repositoryRoot, result.Claims, compact); err != nil {
 				return operationalError(err)
 			}
 			return nil

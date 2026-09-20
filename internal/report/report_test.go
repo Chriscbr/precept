@@ -151,6 +151,7 @@ func TestWriteTextTerminalStyle(t *testing.T) {
 		"\x1b[90m(<1s)\x1b[m",
 		"\x1b[1mexample.Clamp\x1b[m",
 		"\x1b[36m[PRECONDITION]\x1b[m",
+		"\x1b[90mSource  \x1b[m",
 		"\x1b[90mClaim   \x1b[m",
 		"\x1b[90mReason  \x1b[m",
 		"\x1b[1mEvidence\x1b[m",
