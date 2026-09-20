@@ -226,6 +226,5 @@ Here are some ideas for future features:
 - [ ] Add a `--claim` flag to the `verify` command to only verify a specific claim (may be repeated to verify multiple individual claims).
 - [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
 - [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
-- [x] Improve the readability of the `list` command's output.
 - [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.
 - [ ] Support programming languages other than Go.
