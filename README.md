@@ -2,7 +2,35 @@
 
 Precept is a lightweight, agent-powered approach to informal verification.
 
-What does that mean? Basically, precept is a command-line tool that extracts comments in your source code that describe invariants, preconditions, assertions, and other properties, and attempts to verify each property (or produce a counter-example) in an independent Claude Code or Codex session. It's like an AI code review tool, but more fine grained and focused since each property or invariant is evaluated independently. Today, the only supported language is Go, but support for other languages is planned.
+What does that mean? Basically, Precept is a command-line tool that extracts comments in your source code that describe invariants, preconditions, assertions, and other properties, and attempts to verify each property (or produce a counter-example) in an independent Claude Code or Codex session. It's like an AI code review tool, but more fine grained and focused since each property or invariant is evaluated independently. Today, the only supported language is Go, but support for other languages is planned.
+
+## ## Why?
+
+I started Precept while thinking about how coding agents could help us build more reliable software without simply giving them larger and larger code-review prompts.
+
+Asking an agent to review an entire pull request can be useful, but it is open-ended: the agent must decide which properties matter and how deeply to investigate them. I wanted something more fine-grained and user-controlled. The engineer should identify the property that matters, and the agent should focus on checking that property.
+
+There are many useful claims that engineers already reason about this way. For example, you may have seen code comments like these before:
+
+```go
+// POSTCONDITION: either the returned list is sorted, or an error should be returned
+```
+
+```go
+// POSTCONDITION: a failed call should leave the existing record unchanged
+```
+
+```go
+// INVARIANT: Close() should be called on every resource acquired with Open()
+```
+
+These properties can be difficult to express in type systems or with conventional static analyzers. Tests can cover representative cases, but they may not capture every branch, caller, or implementation. In practice, there can be many properties that only survive in someone’s memory, a review discussion, or a decision document far from the relevant code.
+
+You could manually ask a coding agent to re-check each property whenever the code changes, but that workflow is clumsy and easy to forget. Precept is simple automation around that idea: you can write a claim next to the code, discover it consistently, and verify it in a focused, independent agent session.
+
+Precept was also inspired by [Aristo](https://github.com/aretta-ai/aristo), which explores verifiable intent embedded in Rust code and supports more complex verification strategies like generating structured proofs. Precept takes a deliberately smaller approach to start: it uses ordinary code comments, and it writes no proof or artifacts into your code repository.
+
+Precept is not a theorem prover. The verification results it returns are best-effort, and should be treated as advisory. The goal is to make important assumptions explicit, colocated, and easy to investigate again as a codebase changes.
 
 ## Install
 
@@ -242,7 +270,7 @@ Here are some ideas for future features:
 - [ ] Add a `prompt` or `inspect` command to view the prompt that will be sent to the agent.
 - [ ] Add a `compare` command to compare the JSON output of two verification runs for the purpose of identifying new violations, moved claims, agent verdict changes, etc.
 - [ ] Add a `resolve` command (and optional `--resolve` flag on `verify`) to automatically resolve claims that don't hold by suggesting fixes or resolutions based on the context of the codebase. The proposed resolutions could be categorized into `change-code`, `change-claim`, `clarify-claim`, `split-claim`, `move-claim`, `remove-claim`, `add-enforcement`, `add-context`, `defer-to-author`, `not-verifiable`, etc.
-- [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
+- [ ] Add a `precept.toml` file to the project root to configure the Precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
 - [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
 - [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.
 - [ ] Generate an HTML report of the verification results for easier review and sharing. Configurable in the `precept.toml` file.
