@@ -34,7 +34,7 @@ This is a static reasoning task. Do not modify files or create files anywhere in
 
 ## Claim marker meanings
 
-- `PRECONDITION`: the claim is expected to hold when execution enters the source subject. Inspect relevant reachable callers when needed to determine whether they establish it.
+- `PRECONDITION`: the claim is expected to hold when execution enters the source subject. Inspect relevant reachable callers when needed to determine whether they establish it. A PRECONDITION claim is only violated if it's called with arguments that violate the precondition. If all callers establish the precondition, or the function or method is never called, the precondition is not violated. Likewise, if the function panics when the precondition is violated, we say that the precondition is not violated.
 - `POSTCONDITION`: the claim is expected to hold on every normal return path from the source subject, assuming its preconditions hold.
 - `ASSERTION`: the claim is expected to hold at the marker's particular program point whenever execution reaches it.
 - `INVARIANT`: the claim is expected to hold at the boundaries of relevant reachable paths, such as the start and end of the function, method, block, type lifetime, or other subject described by the claim.

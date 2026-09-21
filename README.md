@@ -32,43 +32,80 @@ Precept was also inspired by [Aristo](https://github.com/aretta-ai/aristo), whic
 
 Precept is not a theorem prover. The verification results it returns are best-effort, and should be treated as advisory. The goal is to make important assumptions explicit, colocated, and easy to investigate again as a codebase changes.
 
-## Install
+## Quick start guide
 
-Build and install from source:
+### Step 0: Install
 
 ```bash
 go install github.com/Chriscbr/precept@latest
 ```
 
-Precept relies on an agent CLI being installed on your system, so set up at least one of the following supported harnesses before running it:
+Precept relies on an agent CLI being installed on your system, so install and set up at least one of the supported harnesses before running it:
 
 - [claude](https://code.claude.com/docs/en/quickstart)
 - [codex](https://learn.chatgpt.com/docs/codex/cli)
 
-## Write a claim
+### Step 1: Write claims
 
-Choose the marker that describes the claim:
+First, add markers to your code to describe the properties (called "claims") that you want to verify. For example:
 
 ```go
 // Clamp constrains value to the requested range.
 //
 // PRECONDITION: lo <= hi
-// POSTCONDITION: the result is within the inclusive range [lo, hi]
+// POSTCONDITION: the result is within the inclusive range [lo, hi-1]
 func Clamp(value, lo, hi int) int {
 	return max(lo, min(value, hi))
 }
 ```
 
-All claim markers use an exact spelling: an uppercase keyword preceded by exactly one ASCII space after `//`.
+A claim is a comment starting with one of the words `PRECONDITION:`, `POSTCONDITION:`, `ASSERTION:`, or `INVARIANT:`.
+Each claim will be associated with the nearest function, constant, struct, interface, or package, and will be verified independently.
 
-```go
-func (cache *Cache) Put(key string, value Value) {
-	// ASSERTION: cache.entries is non-nil before it is written
-	cache.entries[key] = value
-}
+For this example, I've included a mistake in the POSTCONDITION claim to demonstrate what happens when a claim is violated.
+(It should be `hi` instead of `hi-1`.)
+
+### Step 2: Verify claims
+
+Run the `verify` subcommand and pass a `--harness` ("claude" or "codex") to verify the claims you wrote:
+
+```text
+$ precept verify --harness claude ./example
 ```
 
-The supported markers are `INVARIANT`, `PRECONDITION`, `POSTCONDITION`, and `ASSERTION`, optionally followed by a claim ID before the colon. These markers have the following meanings:
+When verification finishes, you should see the verification results in the output.
+For the example above, one of the claims is violated and the other holds:
+
+```text
+example.Clamp [PRECONDITION] (clamp-precondition-1)  ✓ HOLDS (14s)
+  Source  example/example.go:5
+
+example.Clamp [POSTCONDITION] (clamp-postcondition-1)  ✗ VIOLATED (21s)
+  Source  example/example.go:6
+  Claim   the result is within the inclusive range [lo, hi-1]
+  Reason  Clamp can return hi, but the claimed inclusive range ends at hi-1.
+
+  Counterexample
+    With value=10, lo=0, and hi=10, the precondition 0 <= 10 holds, but Clamp returns 10, which is outside the inclusive range [0, 9].
+
+  Evidence
+    example/example.go:5-8
+    The precondition permits lo <= hi, while the implementation computes max(lo, min(value, hi)); when value >= hi, this returns hi rather than a value at most hi-1.
+
+  Resume  codex resume 01a0c242-e79e-7152-b376-42860a7f6a51 (View in ChatGPT)
+
+2 claims: 1 holds, 1 violated, 0 inconclusive, 0 errors
+Finished in 21s. Exit code: 1
+Log: /tmp/precept-verify-20260921T043918Z-717812288.log
+```
+
+That's it! You've verified your claims with an agent.
+Try editing the code (or claims) and verify again to see how the results change.
+Also try passing the `--model` and `--effort` flags to verify claims with different models and reasoning efforts.
+
+## Writing claims
+
+The supported claim markers are `INVARIANT`, `PRECONDITION`, `POSTCONDITION`, and `ASSERTION`, optionally followed by a claim ID before the colon. These markers have the following meanings:
 
 - `// PRECONDITION:`: describes a property that is expected to hold before a function is called, or before a block is entered.
 - `// POSTCONDITION:`: describes a property that is expected to hold whenever a function returns, or a block is exited, assuming that all preconditions hold.
