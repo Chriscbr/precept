@@ -25,6 +25,8 @@ const (
 	FormatText Format = "text"
 	// FormatJSON is the versioned machine-readable report.
 	FormatJSON Format = "json"
+	// FormatMarkdown is a GitHub-flavored Markdown report for sharing in CI.
+	FormatMarkdown Format = "markdown"
 )
 
 // Agent identifies the harness used for a run. Empty model and effort values mean
@@ -47,6 +49,11 @@ type Run struct {
 	AppendedContext bool
 	Diagnostics     []discover.Diagnostic
 	Outcomes        []verify.Outcome
+	// SourceURLs maps unchanged, committed source files to web permalinks.
+	SourceURLs map[string]string
+	// Error describes a run that could not complete. Markdown renders it even
+	// when no claim outcomes are available; the existing JSON schema is unchanged.
+	Error string
 }
 
 // Summary counts semantic and operational outcome classes.
@@ -100,6 +107,8 @@ func Write(writer io.Writer, format Format, run Run) error {
 		return WriteText(writer, run)
 	case FormatJSON:
 		return WriteJSON(writer, run)
+	case FormatMarkdown:
+		return WriteMarkdown(writer, run)
 	default:
 		return fmt.Errorf("unsupported report format %q", format)
 	}

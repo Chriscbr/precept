@@ -406,8 +406,11 @@ func TestCommandsUseJSONFlag(t *testing.T) {
 			if !strings.Contains(stdout, "--json") {
 				t.Fatalf("help does not describe --json:\n%s", stdout)
 			}
-			if strings.Contains(stdout, "--format") {
-				t.Fatalf("help still describes removed --format flag:\n%s", stdout)
+			if name == "verify" && (!strings.Contains(stdout, "--format") || !strings.Contains(stdout, "--output")) {
+				t.Fatalf("verify help is missing report flags:\n%s", stdout)
+			}
+			if name == "list" && strings.Contains(stdout, "--format") {
+				t.Fatalf("list unexpectedly supports --format:\n%s", stdout)
 			}
 			if !strings.Contains(stdout, "[file-or-directory]") {
 				t.Fatalf("help does not use the generic file-or-directory argument:\n%s", stdout)
@@ -439,7 +442,7 @@ func TestCommandsExplainFileOrDirectoryArgument(t *testing.T) {
 func TestValidateVerifyFlags(t *testing.T) {
 	t.Parallel()
 
-	valid := verifyFlags{harness: "codex", jobs: 1, timeout: time.Second}
+	valid := verifyFlags{harness: "codex", jobs: 1, timeout: time.Second, format: "text", output: "-"}
 	if err := validateVerifyFlags(valid); err != nil {
 		t.Fatalf("validateVerifyFlags(valid) = %v", err)
 	}

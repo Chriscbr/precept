@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -31,6 +32,8 @@ type verifyFlags struct {
 	appendPrompt      []string
 	appendPromptFiles []string
 	jsonOutput        bool
+	format            string
+	output            string
 }
 
 func newVerifyCommand(version string, state *executionState) *cobra.Command {
@@ -41,6 +44,12 @@ func newVerifyCommand(version string, state *executionState) *cobra.Command {
 		Long:  "Check INVARIANT, PRECONDITION, POSTCONDITION, and ASSERTION claims using local coding agents.\n\nIf file-or-directory is omitted, precept scans the current working directory.",
 		Args:  optionalScopeArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if options.jsonOutput {
+				if cmd.Flags().Changed("format") && options.format != string(report.FormatJSON) {
+					return operationalError(fmt.Errorf("--json conflicts with --format %s", options.format))
+				}
+				options.format = string(report.FormatJSON)
+			}
 			return runVerify(cmd, version, scopeOrCurrent(args), options, state)
 		},
 	}
@@ -54,26 +63,30 @@ func newVerifyCommand(version string, state *executionState) *cobra.Command {
 	flags.StringArrayVar(&options.claims, "claim", nil, "verify only claims with this ID across the selected scope (repeatable)")
 	flags.StringArrayVar(&options.appendPrompt, "append-prompt", nil, "additional context appended to every verifier (repeatable)")
 	flags.StringArrayVar(&options.appendPromptFiles, "append-prompt-file", nil, "file of context appended to every verifier (repeatable)")
-	flags.BoolVar(&options.jsonOutput, "json", false, "emit JSON instead of text")
+	flags.BoolVar(&options.jsonOutput, "json", false, "shorthand for --format json")
+	flags.StringVar(&options.format, "format", "text", "report format: text, json, or markdown")
+	flags.StringVarP(&options.output, "output", "o", "-", "write the report to this file (replaces it); - for stdout")
 	return command
 }
 
 type verifyInvocation struct {
-	command       *cobra.Command
-	version       string
-	scopeArgument string
-	options       verifyFlags
-	startedAt     time.Time
-	log           *verificationLog
-	display       *report.Progress
-	runner        harness.Runner
-	sections      []string
-	scope         resolvedScope
-	discovery     discover.Result
-	info          harness.Info
-	outcomes      []verify.Outcome
-	report        report.Run
-	err           error
+	command         *cobra.Command
+	version         string
+	scopeArgument   string
+	options         verifyFlags
+	startedAt       time.Time
+	log             *verificationLog
+	display         *report.Progress
+	runner          harness.Runner
+	sections        []string
+	scope           resolvedScope
+	discovery       discover.Result
+	info            harness.Info
+	outcomes        []verify.Outcome
+	report          report.Run
+	output          io.Writer
+	reportAttempted bool
+	err             error
 }
 
 func runVerify(command *cobra.Command, version, scopeArgument string, options verifyFlags, state *executionState) (returnErr error) {
@@ -89,14 +102,36 @@ func runVerify(command *cobra.Command, version, scopeArgument string, options ve
 		scopeArgument: scopeArgument,
 		options:       options,
 		startedAt:     time.Now().UTC(),
+		output:        command.OutOrStdout(),
 	}
+	if options.output != "-" {
+		file, err := os.Create(options.output)
+		if err != nil {
+			return operationalError(fmt.Errorf("open report output %q: %w", options.output, err))
+		}
+		invocation.output = file
+		defer func() {
+			if err := file.Close(); err != nil {
+				returnErr = promoteLogFailure(returnErr, fmt.Errorf("close report output %q: %w", options.output, err))
+			}
+		}()
+	}
+	// Markdown remains useful to CI when preflight/discovery fails. Keep the
+	// existing text and JSON error contracts, and never retry a partial report.
+	defer func() {
+		if options.format == string(report.FormatMarkdown) && !invocation.reportAttempted && returnErr != nil {
+			invocation.buildReport()
+			invocation.report.Error = returnErr.Error()
+			returnErr = promoteLogFailure(returnErr, report.WriteMarkdown(invocation.output, invocation.report))
+		}
+	}()
 	if err := invocation.openLog(); err != nil {
 		return operationalError(err)
 	}
 	if state != nil {
 		state.verificationLogPath = invocation.log.Path()
 	}
-	invocation.display = report.NewProgress(command.OutOrStdout(), command.ErrOrStderr(), invocation.startedAt, options.jsonOutput)
+	invocation.display = report.NewProgress(invocation.output, command.ErrOrStderr(), invocation.startedAt, report.Format(options.format))
 	defer func() {
 		if err := invocation.display.Close(); err != nil {
 			returnErr = promoteLogFailure(returnErr, err)
@@ -303,13 +338,14 @@ func (invocation *verifyInvocation) validateClaims() {
 }
 
 func (invocation *verifyInvocation) buildReport() {
-	if invocation.err != nil {
-		return
+	scope := invocation.scope.relativePath
+	if scope == "" {
+		scope = invocation.scopeArgument
 	}
 	invocation.report = report.Run{
 		PreceptVersion: invocation.version,
 		RepositoryRoot: invocation.scope.repositoryRoot,
-		Scope:          invocation.scope.relativePath,
+		Scope:          scope,
 		Agent: report.Agent{
 			Name:    invocation.info.Name,
 			Version: invocation.info.Version,
@@ -322,6 +358,12 @@ func (invocation *verifyInvocation) buildReport() {
 		Diagnostics:     invocation.discovery.Diagnostics,
 		Outcomes:        invocation.outcomes,
 	}
+	if err := invocation.command.Context().Err(); err != nil {
+		invocation.report.Error = "Verification interrupted: " + err.Error()
+	}
+	if invocation.options.format == string(report.FormatMarkdown) && invocation.scope.repositoryRoot != "" {
+		invocation.report.SourceURLs = sourceURLs(invocation.command.Context(), invocation.scope.repositoryRoot)
+	}
 }
 
 func (invocation *verifyInvocation) writeReport() {
@@ -332,6 +374,7 @@ func (invocation *verifyInvocation) writeReport() {
 	if invocation.err != nil {
 		return
 	}
+	invocation.reportAttempted = true
 	invocation.fail(invocation.display.Finish(invocation.report))
 }
 
@@ -370,6 +413,14 @@ func promoteLogFailure(commandErr, logErr error) error {
 }
 
 func validateVerifyFlags(options verifyFlags) error {
+	switch report.Format(options.format) {
+	case report.FormatText, report.FormatJSON, report.FormatMarkdown:
+	default:
+		return fmt.Errorf("--format must be text, json, or markdown (got %q)", options.format)
+	}
+	if options.output == "" {
+		return fmt.Errorf("--output must specify a file or - for stdout")
+	}
 	if options.harness == "" {
 		return fmt.Errorf("--harness is required (want claude or codex)")
 	}

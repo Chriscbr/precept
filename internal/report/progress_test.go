@@ -20,7 +20,7 @@ func progressSettings() Settings { return Settings{Agent: "codex", Jobs: 4, Time
 func TestProgressScanDelayCleanupAndDiagnostics(t *testing.T) {
 	t.Parallel()
 	var out, stderr bytes.Buffer
-	p := newProgress(&out, &stderr, time.Now(), false)
+	p := newProgress(&out, &stderr, time.Now(), FormatText)
 	p.interactive = true
 	if err := p.StartScan("src\x1b[2J"); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestProgressAbortedScanOnlyPreservesVisibleStatus(t *testing.T) {
 	for _, visible := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fast", true: "visible"}[visible], func(t *testing.T) {
 			var stderr bytes.Buffer
-			p := newProgress(io.Discard, &stderr, time.Now(), false)
+			p := newProgress(io.Discard, &stderr, time.Now(), FormatText)
 			p.interactive = true
 			if err := p.StartScan("example"); err != nil {
 				t.Fatal(err)
@@ -81,7 +81,7 @@ func TestProgressAbortedScanOnlyPreservesVisibleStatus(t *testing.T) {
 func TestProgressPlainHeartbeatAndCompletionBlocks(t *testing.T) {
 	t.Parallel()
 	var out, stderr bytes.Buffer
-	p := newProgress(&out, &stderr, time.Now(), false)
+	p := newProgress(&out, &stderr, time.Now(), FormatText)
 	run := fixtureRun()
 	run.Outcomes[0].Duration = 18 * time.Second
 	run.Outcomes[1].Duration = 72 * time.Second
@@ -146,7 +146,7 @@ func TestProgressPlainHeartbeatAndCompletionBlocks(t *testing.T) {
 func TestProgressJSONStaysCleanAndOrderedWithInteractiveStderr(t *testing.T) {
 	t.Parallel()
 	var out, stderr bytes.Buffer
-	p := newProgress(&out, &stderr, time.Now(), true)
+	p := newProgress(&out, &stderr, time.Now(), FormatJSON)
 	p.interactive = true
 	p.errStyle.enabled = true
 	run := fixtureRun()
@@ -189,7 +189,7 @@ func TestProgressJSONStaysCleanAndOrderedWithInteractiveStderr(t *testing.T) {
 func TestProgressInterruptedRunPreservesCompletedResults(t *testing.T) {
 	t.Parallel()
 	var out, stderr bytes.Buffer
-	p := newProgress(&out, &stderr, time.Now(), false)
+	p := newProgress(&out, &stderr, time.Now(), FormatText)
 	run := fixtureRun()
 	run.Outcomes = run.Outcomes[:2]
 	run.Outcomes[1].Result, run.Outcomes[1].Error = nil, context.Canceled
@@ -216,7 +216,7 @@ func TestProgressInterruptedRunPreservesCompletedResults(t *testing.T) {
 func TestProgressJSONInterruptionReportsUnfinishedOnStderr(t *testing.T) {
 	t.Parallel()
 	var out, stderr bytes.Buffer
-	p := newProgress(&out, &stderr, time.Now(), true)
+	p := newProgress(&out, &stderr, time.Now(), FormatJSON)
 	run := fixtureRun()
 	run.Outcomes = run.Outcomes[:2]
 	run.Outcomes[1].Result, run.Outcomes[1].Error = nil, context.Canceled
@@ -246,7 +246,7 @@ func TestProgressJSONInterruptionReportsUnfinishedOnStderr(t *testing.T) {
 func TestProgressActiveChecksShareClaimHeadings(t *testing.T) {
 	t.Parallel()
 	var stderr bytes.Buffer
-	p := newProgress(io.Discard, &stderr, time.Now(), false)
+	p := newProgress(io.Discard, &stderr, time.Now(), FormatText)
 	p.interactive, p.errStyle.enabled = true, true
 	if err := p.StartVerification("example", 3, progressSettings()); err != nil {
 		t.Fatal(err)
@@ -275,7 +275,7 @@ func TestProgressFramesFitNarrowAndShortTerminals(t *testing.T) {
 	t.Parallel()
 	for _, dimensions := range [][2]int{{80, 24}, {30, 8}, {8, 3}, {2, 2}} {
 		var stderr bytes.Buffer
-		p := newProgress(io.Discard, &stderr, time.Now(), false)
+		p := newProgress(io.Discard, &stderr, time.Now(), FormatText)
 		p.interactive = true
 		p.size = func() (int, int) { return dimensions[0], dimensions[1] }
 		if err := p.StartVerification("example", 12, progressSettings()); err != nil {
@@ -305,7 +305,7 @@ func TestProgressResizeDoesNotClearAboveKnownFooterRows(t *testing.T) {
 	t.Parallel()
 	for _, resized := range [][2]int{{20, 24}, {80, 4}, {20, 4}} {
 		var stderr bytes.Buffer
-		p := newProgress(io.Discard, &stderr, time.Now(), false)
+		p := newProgress(io.Discard, &stderr, time.Now(), FormatText)
 		p.interactive = true
 		dimensions := [2]int{80, 24}
 		p.size = func() (int, int) { return dimensions[0], dimensions[1] }
@@ -357,7 +357,7 @@ func (w failedOutput) Write([]byte) (int, error) { return 0, w.err }
 func TestProgressPropagatesWriteFailuresAndStops(t *testing.T) {
 	t.Parallel()
 	want := errors.New("closed output")
-	p := newProgress(io.Discard, failedOutput{want}, time.Now(), false)
+	p := newProgress(io.Discard, failedOutput{want}, time.Now(), FormatText)
 	if err := p.StartScan("."); !errors.Is(err, want) {
 		t.Fatalf("StartScan = %v", err)
 	}

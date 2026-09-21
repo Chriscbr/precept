@@ -27,7 +27,11 @@ func newListCommand() *cobra.Command {
 		Args:  optionalScopeArgs,
 		RunE: func(cmd *cobra.Command, args []string) (returnErr error) {
 			scopeArgument := scopeOrCurrent(args)
-			display := report.NewProgress(cmd.OutOrStdout(), cmd.ErrOrStderr(), time.Now(), jsonOutput)
+			format := report.FormatText
+			if jsonOutput {
+				format = report.FormatJSON
+			}
+			display := report.NewProgress(cmd.OutOrStdout(), cmd.ErrOrStderr(), time.Now(), format)
 			defer func() {
 				if err := display.Close(); err != nil {
 					returnErr = promoteLogFailure(returnErr, err)

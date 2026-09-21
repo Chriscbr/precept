@@ -42,12 +42,13 @@ type activeClaim struct {
 }
 
 // Progress owns the transient stderr display and coordinates it with durable
-// stdout blocks. JSON is written only once, at Finish, in discovery order.
+// stdout blocks. JSON and Markdown are written only once, at Finish.
 type Progress struct {
 	mu                                sync.Mutex
 	out, errOut                       io.Writer
 	outStyle, errStyle                textStyle
-	interactive, json                 bool
+	interactive                       bool
+	format                            Format
 	size                              func() (int, int)
 	started, phaseStarted, lastOutput time.Time
 	phase, scope, agent               string
@@ -63,10 +64,10 @@ type Progress struct {
 	closeOnce                         sync.Once
 }
 
-func newProgress(out, errOut io.Writer, started time.Time, jsonOutput bool) *Progress {
+func newProgress(out, errOut io.Writer, started time.Time, format Format) *Progress {
 	p := &Progress{
 		out: out, errOut: errOut, started: started, lastOutput: started,
-		json: jsonOutput, active: make(map[int]activeClaim),
+		format: format, active: make(map[int]activeClaim),
 		outStyle:    newTextStyle(out, ""),
 		errStyle:    newTextStyle(errOut, ""),
 		interactive: isInteractiveTerminal(errOut, os.LookupEnv),
@@ -93,8 +94,8 @@ func (p *Progress) SetRepositoryRoot(root string) {
 }
 
 // NewProgress starts a bounded refresh loop. Call Close on every exit path.
-func NewProgress(out, errOut io.Writer, started time.Time, jsonOutput bool) *Progress {
-	p := newProgress(out, errOut, started, jsonOutput)
+func NewProgress(out, errOut io.Writer, started time.Time, format Format) *Progress {
+	p := newProgress(out, errOut, started, format)
 	p.stop, p.done = make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(p.done)
@@ -170,14 +171,14 @@ func (p *Progress) StartVerification(scope string, total int, settings Settings)
 	if total == 0 {
 		writer := p.out
 		style := p.outStyle
-		if p.json {
+		if p.format != FormatText {
 			writer = p.errOut
 			style = p.errStyle
 		}
 		p.write(writer, "No claims found in %s\n", style.linkPath(scope, textsafe.SingleLine(scope)))
 		return p.err
 	}
-	if !p.json {
+	if p.format == FormatText {
 		p.record(writeSettings(p.out, scope, total, settings, p.outStyle))
 	}
 	p.phase, p.phaseStarted, p.lastOutput = "verify", time.Now(), time.Now()
@@ -239,7 +240,7 @@ func (p *Progress) Observe(event verify.Event) error {
 	p.completed = append(p.completed, outcome)
 	p.clearFrame()
 	if p.err == nil {
-		if p.json {
+		if p.format != FormatText {
 			if !p.interactive {
 				_, status, _ := outcomeStatus(outcome)
 				p.write(p.errOut, "Completed %d of %d: %s %s (%s:%d)\n", len(p.completed), p.total, status,
@@ -267,7 +268,7 @@ func (p *Progress) Finish(run Run) error {
 	}
 	if p.canceled > 0 {
 		writer := p.out
-		if p.json {
+		if p.format != FormatText {
 			writer = p.errOut
 		}
 		p.write(writer, "Interrupted: %d of %d claims completed; %d unfinished.\n", len(p.completed), p.total, p.canceled)
@@ -275,8 +276,8 @@ func (p *Progress) Finish(run Run) error {
 	if p.err != nil {
 		return p.err
 	}
-	if p.json {
-		p.record(WriteJSON(p.out, run))
+	if p.format != FormatText {
+		p.record(Write(p.out, p.format, run))
 	} else if p.total > 0 {
 		p.record(writeSummary(p.out, Summarize(p.completed), p.outStyle))
 		p.write(p.out, "Finished in %s. Exit code: %d\n", elapsed(run.FinishedAt.Sub(run.StartedAt)), ExitCode(run.Outcomes))

@@ -1,6 +1,8 @@
 # Precept
 
-Precept is a stateless CLI for asking agents check invariants and other natural language claims in your source code. It discovers preconditions, postconditions, and assertions in a selected scope, associates each claim with a type declaration or function, and verifies every claim in an independent Claude Code or Codex session. Today the only supported language is Go, but support for other languages is planned.
+Precept is a lightweight, agent-powered approach to informal verification.
+
+What does that mean? Basically, precept is a command-line tool that extracts comments in your source code that describe invariants, preconditions, assertions, and other properties, and attempts to verify each property (or produce a counter-example) in an independent Claude Code or Codex session. It's like an AI code review tool, but more fine grained and focused since each property or invariant is evaluated independently. Today, the only supported language is Go, but support for other languages is planned.
 
 ## Install
 
@@ -190,7 +192,16 @@ When `precept verify` is run in an interactive shell, the output is condensed to
 
 If you are using Codex as your agent harness, resume commands referenced in the output include a link to view the session in the ChatGPT desktop app if you have it installed.
 
-Use `precept verify --json` to generate a structured JSON document to stdout when verification completes. Its outcomes remain in source discovery order even when checks finish out of order. Progress stays on stderr.
+Use `--format text|json|markdown` to select the output format. Text is the default.
+
+Use `--output PATH` (or `-o PATH`) to write the output to a file (replacing its contents if it already exists). The default, `--output -`, writes to stdout. The parent directory must already exist.
+
+```bash
+# Save a report for a CI artifact or PR comment
+precept verify --harness codex --format markdown --output precept-report.md ./example
+# Save structured results
+precept verify --harness codex --json -o precept-report.json ./example
+```
 
 See `precept verify --help` for all options.
 
@@ -234,7 +245,7 @@ Here are some ideas for future features:
 - [ ] Add a `precept.toml` file to the project root to configure the precept CLI's default behavior (so that users don't have to pass the same flags over and over again).
 - [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
 - [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.
-- [ ] Generate an HTML report of the verification results for easier review and sharing. Configurable in the `precept.toml` file and possibly with `--report-*` flags.
+- [ ] Generate an HTML report of the verification results for easier review and sharing. Configurable in the `precept.toml` file.
 - [ ] Support Rust as an additional programming language.
 - [ ] Support Python as an additional programming language.
 - [ ] Support TypeScript as an additional programming language.

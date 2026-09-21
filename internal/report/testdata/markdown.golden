@@ -1,0 +1,57 @@
+## Precept verification
+
+Out of 4 total claims in `example`, agents found 1 holds, 1 violated, 1 inconclusive, and 1 error.
+
+### Warnings
+
+- `example/free.go:7` — INVARIANT claim is empty
+
+### Summary
+
+<details>
+<summary>All claims</summary>
+
+- ❌ Violated - `cache-miss` - [`example/cache.go:42`](<https://github.com/example/repo/blob/abc123/example/cache.go#L42>)
+- ✅ Holds - `clamp-precondition-1` - `example/clamp.go:11`
+- ❓ Inconclusive - `config-postcondition-1` - `example/config.go:19`
+- ⚠️ Error - `parse-invariant-1` - `example/parse.go:31`
+
+</details>
+
+### Failed claims
+
+<details>
+<summary>Failed claims</summary>
+
+#### ❌ Violated: missing keys are not reported as hits
+
+`cache-miss` · INVARIANT · `(*Cache).Get` · &lt;1s  
+Source: [`example/cache.go:42`](<https://github.com/example/repo/blob/abc123/example/cache.go#L42>)
+
+the zero value is reported as a hit
+
+**Counterexample:** calling Get with an absent key returns (\_, true)
+
+**Supporting evidence:**
+
+- [`example/cache.go:46`](<https://github.com/example/repo/blob/abc123/example/cache.go#L46>) — the method always returns true
+
+#### ❓ Inconclusive: configuration is valid
+
+`config-postcondition-1` · POSTCONDITION · `example.Config` · &lt;1s  
+Source: `example/config.go:19`
+
+validity depends on values loaded at runtime
+
+**Supporting evidence:**
+
+- `example/config.go:22-24` — runtime values are loaded from the environment
+
+#### ⚠️ Error: parsing never panics
+
+`parse-invariant-1` · INVARIANT · `example.Parse` · &lt;1s  
+Source: `example/parse.go:31`
+
+validation timed out after 10m0s
+
+</details>

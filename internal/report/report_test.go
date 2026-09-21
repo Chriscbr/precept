@@ -301,7 +301,7 @@ func TestWriteJSONGolden(t *testing.T) {
 
 func TestWriteDispatchesFormats(t *testing.T) {
 	t.Parallel()
-	for _, format := range []Format{FormatText, FormatJSON} {
+	for _, format := range []Format{FormatText, FormatJSON, FormatMarkdown} {
 		var buffer bytes.Buffer
 		if err := Write(&buffer, format, Run{}); err != nil {
 			t.Errorf("Write(%q) error = %v", format, err)
