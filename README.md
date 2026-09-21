@@ -4,7 +4,7 @@ Precept is a lightweight, agent-powered approach to informal verification.
 
 What does that mean? Basically, Precept is a command-line tool that extracts comments in your source code that describe invariants, preconditions, assertions, and other properties, and attempts to verify each property (or produce a counter-example) in an independent Claude Code or Codex session. It's like an AI code review tool, but more fine grained and focused since each property or invariant is evaluated independently. Today, the only supported language is Go, but support for other languages is planned.
 
-## ## Why?
+## Why?
 
 I started Precept while thinking about how coding agents could help us build more reliable software without simply giving them larger and larger code-review prompts.
 
