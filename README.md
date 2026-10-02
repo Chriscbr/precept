@@ -311,6 +311,7 @@ Here are some ideas for future features:
 - [ ] Interactively prompt the user for options (like the harness selection, model selection, reasoning effort, etc.) when the user runs `precept verify` without any flags.
 - [ ] Allow the harness's allowed tools and available MCPs to be configured via flags (e.g. `--allow-tools search,tools.search`) or in the `precept.toml` file.
 - [ ] Generate an HTML report of the verification results for easier review and sharing. Configurable in the `precept.toml` file.
+- [ ] Add options for configuring how the report is generated or formatted (what sections to include, etc).
 - [ ] Support Rust as an additional programming language.
 - [ ] Support Python as an additional programming language.
 - [ ] Support TypeScript as an additional programming language.
