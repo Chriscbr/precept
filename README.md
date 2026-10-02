@@ -1,38 +1,44 @@
-# Precept
+# precept
+
+[Why?](#why) ▪︎ [Getting Started](#getting-started) ▪︎ [Documentation](#documentation) ▪︎ [Safety Model](#safety-model) ▪︎ [Development](#development) ▪︎ [Roadmap](#roadmap) ▪︎ [License](#license)
+
+
 
 Precept is a lightweight, agent-powered approach to informal verification.
 
-What does that mean? Basically, Precept is a command-line tool that extracts comments in your source code that describe invariants, preconditions, assertions, and other properties, and attempts to verify each property (or produce a counter-example) in an independent Claude Code or Codex session. It's like an AI code review tool, but more fine grained and focused since each property or invariant is evaluated independently. Today, the only supported language is Go, but support for other languages is planned.
+It's a command-line tool that extracts comments in your source code that describe properties, and verifies or finds a counter-example for each property using coding agents.
 
 ## Why?
 
-I started Precept while thinking about how coding agents could help us build more reliable software without simply giving them larger and larger code-review prompts.
+I started Precept while thinking about how coding agents could help us build and maintain more reliable software without simply giving them larger and larger code-review prompts.
 
-Asking an agent to review an entire pull request can be useful, but it is open-ended: the agent must decide which properties matter and how deeply to investigate them. I wanted something more fine-grained and user-controlled. The engineer should identify the property that matters, and the agent should focus on checking that property.
+Asking an agent to review an entire pull request can be useful, but it is open-ended: the agent must decide which properties matter and how deeply to investigate them. I wanted something more fine-grained and user-controlled. I believe that engineers should be tasked with identifying properties that matter, and agents should focus on checking those properties.
 
-There are many useful claims that engineers already reason about this way. For example, you may have seen code comments like these before:
+There are many useful properties that we already reason about this way. For example, you may have seen code comments like these before:
 
 ```go
-// POSTCONDITION: either the returned list is sorted, or an error should be returned
+// POSTCONDITION: either the returned list is sorted, or an error is returned
 ```
 
 ```go
-// POSTCONDITION: a failed call should leave the existing record unchanged
+// POSTCONDITION: a failed call should abort any DB transactions and leave existing records unchanged
 ```
 
 ```go
 // INVARIANT: Close() should be called on every resource acquired with Open()
 ```
 
-These properties can be difficult to express in type systems or with conventional static analyzers. Tests can cover representative cases, but they may not capture every branch, caller, or implementation. In practice, there can be many properties that only survive in someone’s memory, a review discussion, or a decision document far from the relevant code.
+These properties can be difficult to express in type systems or with conventional static analyzers. Tests can cover representative cases, but they may not capture every scenario or edge case. In practice, there can be many properties that only survive in someone’s memory, a review discussion, or a decision document far from the relevant code. Nevertheless, an experienced engineer can often investigate the relevant source and make a well-supported judgment about whether they hold.
 
-You could manually ask a coding agent to re-check each property whenever the code changes, but that workflow is clumsy and easy to forget. Precept is simple automation around that idea: you can write a claim next to the code, discover it consistently, and verify it in a focused, independent agent session.
+Precept automates that investigation. It finds each natural-language claim and asks a read-only coding agent to find evidence for it or identify a counterexample.
 
-Precept was also inspired by [Aristo](https://github.com/aretta-ai/aristo), which explores verifiable intent embedded in Rust code and supports more complex verification strategies like generating structured proofs. Precept takes a deliberately smaller approach to start: it uses ordinary code comments, and it writes no proof or artifacts into your code repository.
+This is deliberately informal verification. The agent's reasoning is not a mathematical proof, and in fact it's possible for the agent to throw up its hands and report an "inconclusive" result. The value is that it gives these implicit properties a repeatable checking process that's simple to use, and easy to customize.
 
-Precept is not a theorem prover. The verification results it returns are best-effort, and should be treated as advisory. The goal is to make important assumptions explicit, colocated, and easy to investigate again as a codebase changes.
+Precept aims to bring some of the discipline of formal verification to the everyday practice of software engineering, without requiring the rigor of a verification language, theorem prover, or a formally modeled codebase.
 
-## Quick start guide
+## Getting Started
+
+
 
 ### Step 0: Install
 
@@ -44,6 +50,8 @@ Precept relies on an agent CLI being installed on your system, so install and se
 
 - [claude](https://code.claude.com/docs/en/quickstart)
 - [codex](https://learn.chatgpt.com/docs/codex/cli)
+
+
 
 ### Step 1: Write claims
 
@@ -103,7 +111,11 @@ That's it! You've verified your claims with an agent.
 Try editing the code (or claims) and verify again to see how the results change.
 Also try passing the `--model` and `--effort` flags to verify claims with different models and reasoning efforts.
 
-## Writing claims
+## Documentation
+
+
+
+### Writing claims
 
 The supported claim markers are `INVARIANT`, `PRECONDITION`, `POSTCONDITION`, and `ASSERTION`, optionally followed by a claim ID before the colon. These markers have the following meanings:
 
@@ -144,7 +156,7 @@ Claims may span consecutive non-empty line comments:
 
 Claim markers inside of block comments (`/* ... */`) are ignored.
 
-## Discover claims
+### Discover claims
 
 List all claims in a file-or-directory scope:
 
@@ -184,7 +196,7 @@ Use `precept list --json` for machine-readable output.
 
 If multiple claims in the same file share an ID, `precept list` will exit with code 2 and print each duplicate ID and its file on stderr.
 
-## Verify claims
+### Verify claims
 
 Verify all claims in a file-or-directory scope with a coding agent. Select the required agent harness with `--harness claude` or `--harness codex`:
 
@@ -270,7 +282,7 @@ precept verify --harness codex --json -o precept-report.json ./example
 
 See `precept verify --help` for all options.
 
-## Verdicts and exit codes
+### Verdicts and exit codes
 
 - `holds`: the agent found the claim consistent with the relevant code.
 - `violated`: the agent found a concrete path or counterexample that breaks it.
@@ -297,6 +309,8 @@ Run the test suite:
 go test ./...
 ```
 
+
+
 ## Roadmap
 
 Here are some ideas for future features:
@@ -317,3 +331,9 @@ Here are some ideas for future features:
 - [ ] Support TypeScript as an additional programming language.
 - [ ] Support opencode as an additional agent harness.
 - [ ] Support pi as an additional agent harness.
+
+
+
+## License
+
+Precept is licensed under the [Apache License 2.0](./LICENSE.md).
