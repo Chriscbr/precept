@@ -1,8 +1,21 @@
-# precept
+<h1 align="center">precept</h1>
 
-[Why?](#why) ▪︎ [Getting Started](#getting-started) ▪︎ [Documentation](#documentation) ▪︎ [Safety Model](#safety-model) ▪︎ [Development](#development) ▪︎ [Roadmap](#roadmap) ▪︎ [License](#license)
+<p align="center">
+<a href="#why">Why?</a>
+▪︎
+<a href="#getting-started">Getting Started</a>
+▪︎
+<a href="#documentation">Documentation</a>
+▪︎
+<a href="#safety-model">Safety Model</a>
+▪︎
+<a href="#development">Development</a>
+▪︎
+<a href="#roadmap">Roadmap</a>
+▪︎
+<a href="#license">License</a>
 
-
+</p>
 
 Precept is a lightweight, agent-powered approach to informal verification.
 
@@ -38,8 +51,6 @@ Precept aims to bring some of the discipline of formal verification to the every
 
 ## Getting Started
 
-
-
 ### Step 0: Install
 
 ```bash
@@ -50,8 +61,6 @@ Precept relies on an agent CLI being installed on your system, so install and se
 
 - [claude](https://code.claude.com/docs/en/quickstart)
 - [codex](https://learn.chatgpt.com/docs/codex/cli)
-
-
 
 ### Step 1: Write claims
 
@@ -112,8 +121,6 @@ Try editing the code (or claims) and verify again to see how the results change.
 Also try passing the `--model` and `--effort` flags to verify claims with different models and reasoning efforts.
 
 ## Documentation
-
-
 
 ### Writing claims
 
@@ -309,8 +316,6 @@ Run the test suite:
 go test ./...
 ```
 
-
-
 ## Roadmap
 
 Here are some ideas for future features:
@@ -331,8 +336,6 @@ Here are some ideas for future features:
 - [ ] Support TypeScript as an additional programming language.
 - [ ] Support opencode as an additional agent harness.
 - [ ] Support pi as an additional agent harness.
-
-
 
 ## License
 
