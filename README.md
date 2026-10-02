@@ -17,6 +17,8 @@
 
 </p>
 
+https://github.com/user-attachments/assets/a9fc63f0-1144-46c9-93b4-7a094f2148ff
+
 Precept is a lightweight, agent-powered approach to informal verification.
 
 It's a command-line tool that extracts comments in your source code that describe properties, and verifies or finds a counter-example for each property using coding agents.
